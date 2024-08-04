@@ -1,0 +1,12 @@
+# Network/IO 
+aiosonic
+aiohttp
+uvloop
+orjson
+
+# Compute
+numpy
+numba
+
+# Misc
+ciso8601
