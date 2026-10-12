@@ -1231,11 +1231,12 @@ fn cpu_model() -> Option<String> {
     #[cfg(target_os = "linux")]
     {
         let data = fs::read_to_string("/proc/cpuinfo").ok()?;
-        return data.lines().find_map(|line| {
+        data.lines().find_map(|line| {
             let (name, value) = line.split_once(':')?;
             matches!(name.trim(), "model name" | "Hardware").then(|| value.trim().to_owned())
-        });
+        })
     }
+    #[cfg(not(target_os = "linux"))]
     None
 }
 
