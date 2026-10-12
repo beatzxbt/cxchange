@@ -5,6 +5,11 @@ alone are not an acceptance criterion: assertions compare complete responses,
 live state, aggregates, identity counters, and continuation after rejection or
 recovery.
 
+The completed transition passes 70 Rust tests in both debug and release builds
+(including the documentation example), 218 preserved Python tests, type
+checking, and 300,000 differential commands across three seeds. CI also runs
+the native and reference checks on Linux.
+
 | Area | Evidence |
 | --- | --- |
 | Primitive validation and storage | Unit tests in `types.rs` and `arena.rs`: exact units, limits, response reservation, deterministic reuse, stale generations, and generation exhaustion |

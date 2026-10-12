@@ -1,0 +1,190 @@
+{
+  "benchmark": "cxchange-latency",
+  "version": "0.1.0",
+  "build_mode": "release",
+  "platform": {"os": "macos", "arch": "aarch64"},
+  "environment": {"cpu_model": "Apple M2", "logical_cpus": 8, "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"},
+  "schedule": {"requested_primary_samples_per_class": 1100000, "full_sweep_requested_samples": 10, "profile_sample_cap": 10000, "requested_arrival_rate_hz": 50000, "effective_arrival_rate_hz": 50000.000, "arrival_interval_ns": 20000, "mode": "open_loop_scheduled_offsets"},
+  "scheduler_note": "ordinary scenarios use one thread to catch up scheduled arrivals while preserving original timestamps; the mixed sweep scenario blocks the producer during the full-sweep call, then submits due arrivals; queue_wait begins at adapter admission while scheduled_to_start and scheduled_to_delivery include producer/admission lag; no concurrent producer is modeled",
+  "profile_notes": {"primary_target": "only retained-anchor Add/Cancel and retained-anchor Amend use the requested primary sample count; all other profiles are exploratory", "near_full_and_fifo_profiles": "seed the default 128 orders per level by 1024 levels book (131072 live orders) and cap ordinary profile arrivals at 10000", "mixed_sweep": "same-time arrivals scheduled at sweep start, caught up after sweep completion; small response pool intentionally shows admission pressure", "held_credit_pressure": "one-time saturation check, not sustained slow-consumer latency or throughput evidence", "tail_percentiles": "p99.9 is omitted for profiles with fewer than 1000 valid completed samples and for explicitly non-tail profiles; matching rejections are counted separately and excluded from valid-operation latency"},
+  "reports": [
+    {"name": "add_cancel_empty_book_churn", "sample_intent": "exploratory", "engine_config": {"max_orders_per_level": 32, "max_levels": 32, "max_live_orders": 1024}, "command_capacity": 32, "response_capacity": 32, "requested_commands_per_class": 1000, "tail_percentiles_enabled": true, "adapter_occupancy": {"queue_depth_start": 0, "queue_depth_peak": 3, "queue_depth_end": 0, "response_credits_in_use_start": 0, "response_credits_in_use_peak": 3, "response_credits_in_use_end": 0}, "metrics": [
+      {"class": "add", "attempted": 1000, "admitted": 1000, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 3, "response_credits_in_use": 3},
+       "classification": {"fills_total": 0, "order_deltas_total": 1000, "level_deltas_total": 1000, "zero_fill_commands": 1000, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 1000, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 1000, "p50": 125, "p95": 333, "p99": 8708, "p99_9": 40083, "p99_9_over_p50": 320.6640},
+         "queue_wait": {"samples": 1000, "p50": 41, "p95": 42, "p99": 208, "p99_9": 2875, "p99_9_over_p50": 70.1220},
+         "execution": {"samples": 1000, "p50": 42, "p95": 125, "p99": 708, "p99_9": 9875, "p99_9_over_p50": 235.1190},
+         "delivery_wait": {"samples": 1000, "p50": 0, "p95": 42, "p99": 125, "p99_9": 250, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 1000, "p50": 83, "p95": 167, "p99": 5417, "p99_9": 26750, "p99_9_over_p50": 322.2892}
+       }},
+      {"class": "cancel", "attempted": 1000, "admitted": 1000, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 2, "response_credits_in_use": 2},
+       "classification": {"fills_total": 0, "order_deltas_total": 1000, "level_deltas_total": 1000, "zero_fill_commands": 1000, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 1000, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 1000, "p50": 167, "p95": 375, "p99": 8083, "p99_9": 23500, "p99_9_over_p50": 140.7186},
+         "queue_wait": {"samples": 1000, "p50": 0, "p95": 42, "p99": 167, "p99_9": 4959, "p99_9_over_p50": null},
+         "execution": {"samples": 1000, "p50": 83, "p95": 167, "p99": 708, "p99_9": 2292, "p99_9_over_p50": 27.6145},
+         "delivery_wait": {"samples": 1000, "p50": 42, "p95": 42, "p99": 125, "p99_9": 208, "p99_9_over_p50": 4.9524},
+         "scheduled_to_start": {"samples": 1000, "p50": 83, "p95": 167, "p99": 7625, "p99_9": 20833, "p99_9_over_p50": 251.0000}
+       }}
+    ]},
+    {"name": "add_cancel_with_retained_anchor_churn", "sample_intent": "primary_target", "engine_config": {"max_orders_per_level": 32, "max_levels": 32, "max_live_orders": 1024}, "command_capacity": 32, "response_capacity": 32, "requested_commands_per_class": 1100000, "tail_percentiles_enabled": true, "adapter_occupancy": {"queue_depth_start": 0, "queue_depth_peak": 32, "queue_depth_end": 0, "response_credits_in_use_start": 0, "response_credits_in_use_peak": 32, "response_credits_in_use_end": 0}, "metrics": [
+      {"class": "add", "attempted": 1090440, "admitted": 1079749, "admission_rejected": 10691, "matching_rejected": 0, "skipped_dependencies": 9560, "rejection_causes": {"command_queue_full": 10691, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 32, "response_credits_in_use": 32},
+       "classification": {"fills_total": 0, "order_deltas_total": 1079749, "level_deltas_total": 1079749, "zero_fill_commands": 1079749, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 1079749, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 1079749, "p50": 125, "p95": 166, "p99": 5500, "p99_9": 1598583, "p99_9_over_p50": 12788.6640},
+         "queue_wait": {"samples": 1079749, "p50": 0, "p95": 42, "p99": 125, "p99_9": 15500, "p99_9_over_p50": null},
+         "execution": {"samples": 1079749, "p50": 42, "p95": 84, "p99": 167, "p99_9": 1666, "p99_9_over_p50": 39.6667},
+         "delivery_wait": {"samples": 1079749, "p50": 0, "p95": 42, "p99": 42, "p99_9": 167, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 1079749, "p50": 41, "p95": 83, "p99": 4833, "p99_9": 1597916, "p99_9_over_p50": 38973.5610}
+       }},
+      {"class": "cancel", "attempted": 1089309, "admitted": 1079748, "admission_rejected": 9561, "matching_rejected": 0, "skipped_dependencies": 10691, "rejection_causes": {"command_queue_full": 9561, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 32, "response_credits_in_use": 32},
+       "classification": {"fills_total": 0, "order_deltas_total": 1079748, "level_deltas_total": 1079748, "zero_fill_commands": 1079748, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 1079748, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 1079748, "p50": 125, "p95": 166, "p99": 5625, "p99_9": 1600666, "p99_9_over_p50": 12805.3280},
+         "queue_wait": {"samples": 1079748, "p50": 0, "p95": 42, "p99": 125, "p99_9": 15667, "p99_9_over_p50": null},
+         "execution": {"samples": 1079748, "p50": 42, "p95": 84, "p99": 167, "p99_9": 2083, "p99_9_over_p50": 49.5952},
+         "delivery_wait": {"samples": 1079748, "p50": 0, "p95": 42, "p99": 42, "p99_9": 166, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 1079748, "p50": 41, "p95": 83, "p99": 4916, "p99_9": 1598791, "p99_9_over_p50": 38994.9024}
+       }}
+    ]},
+    {"name": "amend_one_order_with_retained_anchor", "sample_intent": "primary_target", "engine_config": {"max_orders_per_level": 32, "max_levels": 32, "max_live_orders": 1024}, "command_capacity": 32, "response_capacity": 32, "requested_commands_per_class": 1100000, "tail_percentiles_enabled": true, "adapter_occupancy": {"queue_depth_start": 0, "queue_depth_peak": 32, "queue_depth_end": 0, "response_credits_in_use_start": 0, "response_credits_in_use_peak": 32, "response_credits_in_use_end": 0}, "metrics": [
+      {"class": "amend", "attempted": 1100000, "admitted": 1077192, "admission_rejected": 22808, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 22808, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 32, "response_credits_in_use": 32},
+       "classification": {"fills_total": 0, "order_deltas_total": 2154384, "level_deltas_total": 2154384, "zero_fill_commands": 1077192, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 0, "multiple_level_change_commands": 1077192},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 1077192, "p50": 166, "p95": 250, "p99": 7333, "p99_9": 3284375, "p99_9_over_p50": 19785.3916},
+         "queue_wait": {"samples": 1077192, "p50": 0, "p95": 42, "p99": 125, "p99_9": 22458, "p99_9_over_p50": null},
+         "execution": {"samples": 1077192, "p50": 84, "p95": 125, "p99": 291, "p99_9": 3250, "p99_9_over_p50": 38.6905},
+         "delivery_wait": {"samples": 1077192, "p50": 0, "p95": 42, "p99": 83, "p99_9": 167, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 1077192, "p50": 41, "p95": 83, "p99": 6208, "p99_9": 3270958, "p99_9_over_p50": 79779.4634}
+       }}
+    ]},
+    {"name": "full_book_churn_at_default_capacity", "sample_intent": "exploratory", "engine_config": {"max_orders_per_level": 128, "max_levels": 1024, "max_live_orders": 131072}, "command_capacity": 8, "response_capacity": 8, "requested_commands_per_class": 10000, "tail_percentiles_enabled": true, "adapter_occupancy": {"queue_depth_start": 0, "queue_depth_peak": 8, "queue_depth_end": 0, "response_credits_in_use_start": 0, "response_credits_in_use_peak": 8, "response_credits_in_use_end": 0}, "metrics": [
+      {"class": "cancel_near_full", "attempted": 10000, "admitted": 9996, "admission_rejected": 4, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 4, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 8, "response_credits_in_use": 8},
+       "classification": {"fills_total": 0, "order_deltas_total": 9996, "level_deltas_total": 9996, "zero_fill_commands": 9996, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 9996, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 9996, "p50": 1083, "p95": 2542, "p99": 10625, "p99_9": 119250, "p99_9_over_p50": 110.1108},
+         "queue_wait": {"samples": 9996, "p50": 41, "p95": 42, "p99": 84, "p99_9": 16417, "p99_9_over_p50": 400.4146},
+         "execution": {"samples": 9996, "p50": 916, "p95": 2125, "p99": 3916, "p99_9": 21708, "p99_9_over_p50": 23.6987},
+         "delivery_wait": {"samples": 9996, "p50": 41, "p95": 42, "p99": 42, "p99_9": 167, "p99_9_over_p50": 4.0732},
+         "scheduled_to_start": {"samples": 9996, "p50": 125, "p95": 292, "p99": 6250, "p99_9": 93208, "p99_9_over_p50": 745.6640}
+       }},
+      {"class": "add_near_full", "attempted": 9996, "admitted": 9996, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 4, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 8, "response_credits_in_use": 8},
+       "classification": {"fills_total": 0, "order_deltas_total": 9996, "level_deltas_total": 9996, "zero_fill_commands": 9996, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 9996, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 9996, "p50": 542, "p95": 1000, "p99": 8292, "p99_9": 104542, "p99_9_over_p50": 192.8819},
+         "queue_wait": {"samples": 9996, "p50": 0, "p95": 41, "p99": 84, "p99_9": 20958, "p99_9_over_p50": null},
+         "execution": {"samples": 9996, "p50": 459, "p95": 834, "p99": 1959, "p99_9": 10083, "p99_9_over_p50": 21.9673},
+         "delivery_wait": {"samples": 9996, "p50": 41, "p95": 42, "p99": 42, "p99_9": 167, "p99_9_over_p50": 4.0732},
+         "scheduled_to_start": {"samples": 9996, "p50": 42, "p95": 83, "p99": 6042, "p99_9": 103500, "p99_9_over_p50": 2464.2857}
+       }}
+    ]},
+    {"name": "fifo_cancel_positions_at_default_full_book", "sample_intent": "exploratory", "engine_config": {"max_orders_per_level": 128, "max_levels": 1024, "max_live_orders": 131072}, "command_capacity": 8, "response_capacity": 8, "requested_commands_per_class": null, "tail_percentiles_enabled": true, "adapter_occupancy": {"queue_depth_start": 0, "queue_depth_peak": 8, "queue_depth_end": 0, "response_credits_in_use_start": 0, "response_credits_in_use_peak": 8, "response_credits_in_use_end": 0}, "metrics": [
+      {"class": "cancel_head", "attempted": 3334, "admitted": 3334, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 7, "response_credits_in_use": 7},
+       "classification": {"fills_total": 0, "order_deltas_total": 3334, "level_deltas_total": 3334, "zero_fill_commands": 3334, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 3334, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 3334, "p50": 375, "p95": 541, "p99": 2541, "p99_9": 39500, "p99_9_over_p50": 105.3333},
+         "queue_wait": {"samples": 3334, "p50": 42, "p95": 42, "p99": 42, "p99_9": 2000, "p99_9_over_p50": 47.6190},
+         "execution": {"samples": 3334, "p50": 292, "p95": 458, "p99": 959, "p99_9": 5000, "p99_9_over_p50": 17.1233},
+         "delivery_wait": {"samples": 3334, "p50": 0, "p95": 42, "p99": 42, "p99_9": 125, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 3334, "p50": 83, "p95": 83, "p99": 208, "p99_9": 39000, "p99_9_over_p50": 469.8795}
+       }},
+      {"class": "cancel_middle", "attempted": 3333, "admitted": 3333, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 5, "response_credits_in_use": 5},
+       "classification": {"fills_total": 0, "order_deltas_total": 3333, "level_deltas_total": 3333, "zero_fill_commands": 3333, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 3333, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 3333, "p50": 416, "p95": 583, "p99": 3083, "p99_9": 20666, "p99_9_over_p50": 49.6779},
+         "queue_wait": {"samples": 3333, "p50": 42, "p95": 84, "p99": 125, "p99_9": 1333, "p99_9_over_p50": 31.7381},
+         "execution": {"samples": 3333, "p50": 333, "p95": 500, "p99": 916, "p99_9": 4584, "p99_9_over_p50": 13.7658},
+         "delivery_wait": {"samples": 3333, "p50": 0, "p95": 42, "p99": 42, "p99_9": 125, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 3333, "p50": 83, "p95": 125, "p99": 375, "p99_9": 19875, "p99_9_over_p50": 239.4578}
+       }},
+      {"class": "cancel_tail", "attempted": 3333, "admitted": 3333, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 5, "response_credits_in_use": 5},
+       "classification": {"fills_total": 0, "order_deltas_total": 3333, "level_deltas_total": 3333, "zero_fill_commands": 3333, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 3333, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 3333, "p50": 375, "p95": 500, "p99": 1250, "p99_9": 33250, "p99_9_over_p50": 88.6667},
+         "queue_wait": {"samples": 3333, "p50": 42, "p95": 42, "p99": 42, "p99_9": 1084, "p99_9_over_p50": 25.8095},
+         "execution": {"samples": 3333, "p50": 292, "p95": 417, "p99": 750, "p99_9": 4041, "p99_9_over_p50": 13.8390},
+         "delivery_wait": {"samples": 3333, "p50": 0, "p95": 42, "p99": 42, "p99_9": 125, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 3333, "p50": 83, "p95": 83, "p99": 208, "p99_9": 32041, "p99_9_over_p50": 386.0361}
+       }},
+      {"class": "replacement_add", "attempted": 10000, "admitted": 10000, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 8, "response_credits_in_use": 8},
+       "classification": {"fills_total": 0, "order_deltas_total": 10000, "level_deltas_total": 10000, "zero_fill_commands": 10000, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 10000, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 10000, "p50": 375, "p95": 500, "p99": 1833, "p99_9": 25958, "p99_9_over_p50": 69.2213},
+         "queue_wait": {"samples": 10000, "p50": 0, "p95": 42, "p99": 42, "p99_9": 1000, "p99_9_over_p50": null},
+         "execution": {"samples": 10000, "p50": 292, "p95": 416, "p99": 667, "p99_9": 5958, "p99_9_over_p50": 20.4041},
+         "delivery_wait": {"samples": 10000, "p50": 0, "p95": 42, "p99": 42, "p99_9": 125, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 10000, "p50": 41, "p95": 83, "p99": 250, "p99_9": 24333, "p99_9_over_p50": 593.4878}
+       }},
+      {"class": "cancel_head_middle_tail", "attempted": 10000, "admitted": 10000, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 7, "response_credits_in_use": 7},
+       "classification": {"fills_total": 0, "order_deltas_total": 10000, "level_deltas_total": 10000, "zero_fill_commands": 10000, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 10000, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 10000, "p50": 375, "p95": 541, "p99": 2208, "p99_9": 29291, "p99_9_over_p50": 78.1093},
+         "queue_wait": {"samples": 10000, "p50": 42, "p95": 42, "p99": 84, "p99_9": 1333, "p99_9_over_p50": 31.7381},
+         "execution": {"samples": 10000, "p50": 292, "p95": 458, "p99": 875, "p99_9": 4334, "p99_9_over_p50": 14.8425},
+         "delivery_wait": {"samples": 10000, "p50": 0, "p95": 42, "p99": 42, "p99_9": 125, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 10000, "p50": 83, "p95": 83, "p99": 250, "p99_9": 28416, "p99_9_over_p50": 342.3614}
+       }}
+    ]},
+    {"name": "full_sweep_at_default_capacity", "sample_intent": "exploratory", "engine_config": {"max_orders_per_level": 128, "max_levels": 1024, "max_live_orders": 131072}, "command_capacity": 1, "response_capacity": 1, "requested_commands_per_class": 10, "tail_percentiles_enabled": false, "adapter_occupancy": {"queue_depth_start": 0, "queue_depth_peak": 1, "queue_depth_end": 0, "response_credits_in_use_start": 0, "response_credits_in_use_peak": 1, "response_credits_in_use_end": 0}, "metrics": [
+      {"class": "full_sweep", "attempted": 10, "admitted": 10, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 1, "response_credits_in_use": 1},
+       "classification": {"fills_total": 1310720, "order_deltas_total": 1310730, "level_deltas_total": 10240, "zero_fill_commands": 0, "single_fill_commands": 0, "multi_fill_commands": 10, "full_sweep_commands": 10, "zero_level_change_commands": 0, "one_level_change_commands": 0, "multiple_level_change_commands": 10},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 10, "p50": 12086833, "p95": 48369750, "p99": 48369750, "p99_9": null, "p99_9_over_p50": null},
+         "queue_wait": {"samples": 10, "p50": 41, "p95": 42, "p99": 42, "p99_9": null, "p99_9_over_p50": null},
+         "execution": {"samples": 10, "p50": 12086417, "p95": 48369584, "p99": 48369584, "p99_9": null, "p99_9_over_p50": null},
+         "delivery_wait": {"samples": 10, "p50": 166, "p95": 291, "p99": 291, "p99_9": null, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 10, "p50": 83, "p95": 250, "p99": 250, "p99_9": null, "p99_9_over_p50": null}
+       }}
+    ]},
+    {"name": "single_thread_scheduled_arrival_catch_up_behind_default_full_sweep", "sample_intent": "exploratory", "engine_config": {"max_orders_per_level": 128, "max_levels": 1024, "max_live_orders": 131072}, "command_capacity": 24, "response_capacity": 4, "requested_commands_per_class": null, "tail_percentiles_enabled": false, "adapter_occupancy": {"queue_depth_start": 0, "queue_depth_peak": 3, "queue_depth_end": 0, "response_credits_in_use_start": 0, "response_credits_in_use_peak": 4, "response_credits_in_use_end": 0}, "metrics": [
+      {"class": "full_sweep", "attempted": 1, "admitted": 1, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 1, "response_credits_in_use": 1},
+       "classification": {"fills_total": 131072, "order_deltas_total": 131073, "level_deltas_total": 1024, "zero_fill_commands": 0, "single_fill_commands": 0, "multi_fill_commands": 1, "full_sweep_commands": 1, "zero_level_change_commands": 0, "one_level_change_commands": 0, "multiple_level_change_commands": 1},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 1, "p50": 13470834, "p95": 13470834, "p99": 13470834, "p99_9": null, "p99_9_over_p50": null},
+         "queue_wait": {"samples": 1, "p50": 125, "p95": 125, "p99": 125, "p99_9": null, "p99_9_over_p50": null},
+         "execution": {"samples": 1, "p50": 13466750, "p95": 13466750, "p99": 13466750, "p99_9": null, "p99_9_over_p50": null},
+         "delivery_wait": {"samples": 1, "p50": 3792, "p95": 3792, "p99": 3792, "p99_9": null, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 1, "p50": 292, "p95": 292, "p99": 292, "p99_9": null, "p99_9_over_p50": null}
+       }},
+      {"class": "add_scheduled_during_full_sweep", "attempted": 12, "admitted": 3, "admission_rejected": 9, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 9, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 3, "response_credits_in_use": 4},
+       "classification": {"fills_total": 0, "order_deltas_total": 3, "level_deltas_total": 3, "zero_fill_commands": 3, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 3, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 3, "p50": 13471292, "p95": 13471334, "p99": 13471334, "p99_9": null, "p99_9_over_p50": null},
+         "queue_wait": {"samples": 3, "p50": 2333, "p95": 2541, "p99": 2541, "p99_9": null, "p99_9_over_p50": null},
+         "execution": {"samples": 3, "p50": 209, "p95": 1875, "p99": 1875, "p99_9": null, "p99_9_over_p50": null},
+         "delivery_wait": {"samples": 3, "p50": 708, "p95": 875, "p99": 875, "p99_9": null, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 3, "p50": 13470375, "p95": 13470625, "p99": 13470625, "p99_9": null, "p99_9_over_p50": null}
+       }},
+      {"class": "cancel_scheduled_during_full_sweep", "attempted": 3, "admitted": 0, "admission_rejected": 3, "matching_rejected": 0, "skipped_dependencies": 9, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 3, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 3, "response_credits_in_use": 4},
+       "classification": {"fills_total": 0, "order_deltas_total": 0, "level_deltas_total": 0, "zero_fill_commands": 0, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 0, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 0, "p50": null, "p95": null, "p99": null, "p99_9": null, "p99_9_over_p50": null},
+         "queue_wait": {"samples": 0, "p50": null, "p95": null, "p99": null, "p99_9": null, "p99_9_over_p50": null},
+         "execution": {"samples": 0, "p50": null, "p95": null, "p99": null, "p99_9": null, "p99_9_over_p50": null},
+         "delivery_wait": {"samples": 0, "p50": null, "p95": null, "p99": null, "p99_9": null, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 0, "p50": null, "p95": null, "p99": null, "p99_9": null, "p99_9_over_p50": null}
+       }}
+    ]},
+    {"name": "held_response_credit_pressure_check", "sample_intent": "exploratory", "engine_config": {"max_orders_per_level": 32, "max_levels": 32, "max_live_orders": 1024}, "command_capacity": 32, "response_capacity": 32, "requested_commands_per_class": null, "tail_percentiles_enabled": false, "adapter_occupancy": {"queue_depth_start": 0, "queue_depth_peak": 32, "queue_depth_end": 0, "response_credits_in_use_start": 0, "response_credits_in_use_peak": 32, "response_credits_in_use_end": 0}, "metrics": [
+      {"class": "add_while_holding_results", "attempted": 32, "admitted": 32, "admission_rejected": 0, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 0, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 32, "response_credits_in_use": 32},
+       "classification": {"fills_total": 0, "order_deltas_total": 32, "level_deltas_total": 32, "zero_fill_commands": 32, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 32, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 32, "p50": 42875, "p95": 56917, "p99": 57792, "p99_9": null, "p99_9_over_p50": null},
+         "queue_wait": {"samples": 32, "p50": 34167, "p95": 53459, "p99": 54625, "p99_9": null, "p99_9_over_p50": null},
+         "execution": {"samples": 32, "p50": 1209, "p95": 7375, "p99": 7667, "p99_9": null, "p99_9_over_p50": null},
+         "delivery_wait": {"samples": 32, "p50": 21542, "p95": 48500, "p99": 49375, "p99_9": null, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 32, "p50": 19542, "p95": 24167, "p99": 24333, "p99_9": null, "p99_9_over_p50": null}
+       }},
+      {"class": "cancel_under_held_credit_pressure", "attempted": 64, "admitted": 0, "admission_rejected": 64, "matching_rejected": 0, "skipped_dependencies": 0, "rejection_causes": {"command_queue_full": 0, "response_pool_exhausted": 64, "submission_id_exhausted": 0}, "adapter_occupancy_peak": {"queue_depth": 0, "response_credits_in_use": 32},
+       "classification": {"fills_total": 0, "order_deltas_total": 0, "level_deltas_total": 0, "zero_fill_commands": 0, "single_fill_commands": 0, "multi_fill_commands": 0, "full_sweep_commands": 0, "zero_level_change_commands": 0, "one_level_change_commands": 0, "multiple_level_change_commands": 0},
+       "valid_operation_latency_ns": {
+         "scheduled_to_delivery": {"samples": 0, "p50": null, "p95": null, "p99": null, "p99_9": null, "p99_9_over_p50": null},
+         "queue_wait": {"samples": 0, "p50": null, "p95": null, "p99": null, "p99_9": null, "p99_9_over_p50": null},
+         "execution": {"samples": 0, "p50": null, "p95": null, "p99": null, "p99_9": null, "p99_9_over_p50": null},
+         "delivery_wait": {"samples": 0, "p50": null, "p95": null, "p99": null, "p99_9": null, "p99_9_over_p50": null},
+         "scheduled_to_start": {"samples": 0, "p50": null, "p95": null, "p99": null, "p99_9": null, "p99_9_over_p50": null}
+       }}
+    ]}
+  ]
+}

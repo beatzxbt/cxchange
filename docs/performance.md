@@ -123,3 +123,37 @@ The mixed profile admits only three post-sweep Adds with its four credits;
 Cancels encounter pressure. It provides no mixed Cancel latency distribution
 or mixed-workload tail estimate. Full-capacity exploratory profiles also need
 larger repeated samples before their p99.9 values can support regression gates.
+
+## Recorded workstation baseline
+
+Two sequential release runs on 2026-10-12 used an Apple M2, 16 GiB RAM,
+macOS 26.6.2, Rust 1.95.0, and 50,000 scheduled arrivals/second. Each primary
+class requested 1,100,000 commands and completed over one million successfully
+in each run. All profiles recorded zero matching rejections. Admission pressure
+and skipped dependencies remain in the results.
+
+| Run | Operation | Successful samples | Admission rejections | Matching p50 ns | Matching p99.9 ns | p99.9/p50 | Scheduled delivery p99.9 ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | Add | 1,077,986 | 11,638 | 42 | 1,708 | 40.67 | 3.792250 |
+| 1 | Cancel | 1,077,986 | 10,376 | 42 | 2,041 | 48.60 | 3.791625 |
+| 1 | Amend | 1,078,460 | 21,540 | 84 | 3,209 | 38.20 | 2.648917 |
+| 2 | Add | 1,079,749 | 10,691 | 42 | 1,666 | 39.67 | 1.598583 |
+| 2 | Cancel | 1,079,748 | 9,561 | 42 | 2,083 | 49.60 | 1.600666 |
+| 2 | Amend | 1,077,192 | 22,808 | 84 | 3,250 | 38.69 | 3.284375 |
+
+The scheduled delivery tails are much larger than matching tails. They include
+producer lag, harness bookkeeping, and workstation scheduling. The 42–84 ns
+matching medians also make ratios sensitive to measurement granularity. These
+results establish a baseline for later work; they do not establish stable
+production latency or a regression threshold.
+
+Raw reports preserve all profiles, counts, and timing components:
+
+- [Run 1](benchmarks/apple-m2-run-1.json)
+- [Run 2](benchmarks/apple-m2-run-2.json)
+- [Environment, build command/profile, source commits, and measurement scope](benchmarks/apple-m2-environment.json)
+
+Each report includes ten separate default-capacity sweeps. Full-book ordinary
+churn and FIFO-position samples remain exploratory. Larger repeated samples
+and a controlled execution environment are needed before setting their latency
+gates.
