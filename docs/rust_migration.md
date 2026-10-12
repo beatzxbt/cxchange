@@ -1,95 +1,74 @@
 # Rust migration
 
-The matching engine is moving from the Python reference to a native Rust
-matching core. The Python implementation and its tests are retained under
-reference/python while the Rust contract, implementation, and replay checks
-are completed. This migration does not add Python bindings.
+The matching engine now uses a native Rust core. Source, tests, development
+commands, and CI require no Python installation or bindings.
 
-## Migration sequence
+## Completed design stages
 
-Each stage builds on the contracts and evidence from the previous stages:
+1. **Typed boundary.** Exact numeric units, errors, configuration, and identity
+   rules are defined in the [matching-core contract](rust_matching_core_contract.md).
+2. **Storage and price index.** Private generation-checked arena slots,
+   free-slot reuse, indexed FIFO links, ordered bid/ask levels, and checked
+   aggregate quantities keep public identity independent of storage.
+3. **Maker operations.** Add, cancel, and amend enforce account ownership,
+   resulting-state capacity, FIFO rules, and rejection atomicity.
+4. **Taker matching.** Price-time traversal and reached-only self-trade
+   detection produce deterministic events and complete eligible-book sweeps.
+5. **Snapshots and replay.** Validated, versioned snapshots preserve identities
+   and reproduce subsequent public results after serialized recovery.
+6. **Execution and measurement.** Bounded admission and response ownership
+   separate backpressure from matching results. The latency harness measures
+   queue wait, matching, and delivery.
+7. **Reference retirement.** Shared-domain comparison was used during the
+   rewrite. A subsequent [test review](python_test_review.md) selected useful
+   behavioral gaps for native tests; the Python implementation, tests,
+   comparator, dependency files, and CI job were then removed.
 
-1. **Workspace and typed boundary.** Establish the Rust workspace, command and
-   event types, exact numeric units, errors, configuration, and the identity
-   rules in the [matching-core contract](rust_matching_core_contract.md).
-2. **Order storage.** Add private arena slots, generation-checked handles,
-   free-slot reuse, and indexed FIFO links. Public IDs remain independent of
-   storage details.
-3. **Levels and price index.** Add ordered bid/ask levels and checked aggregate
-   quantities. Keep the first price index behind a private component boundary.
-4. **Maker operations.** Implement add, cancel, and amend with account
-   ownership, resulting-state capacity checks, FIFO rules, and rejection
-   atomicity.
-5. **Taker matching.** Implement price-time traversal, self-trade detection,
-   full eligible-book fills, deterministic fill events, and complete sweep
-   responses.
-6. **Snapshots and replay.** Validate snapshots before activation and verify
-   that restored engines preserve identity and reproduce public results.
-7. **Reference comparison.** Run shared command sequences through Rust and
-   Python, compare normalized events and state, and document intentional
-   differences in the Python adapter.
-8. **Execution and latency harness.** Add bounded admission/output ownership
-   and measure queue wait, matching, and event delivery separately.
-9. **Integration cutover.** Replace the Python engine at its caller only after
-   the core, snapshot, and reference evidence is reviewable. Networking, risk,
-   settlement, and durable acknowledgement remain separate work.
+## Contract decisions
 
-## Compatibility method
+The Rust core accepts typed integer IDs and exact instrument units. External
+string or decimal parsing belongs to future caller adapters. Numeric
+account/client IDs, account-scoped live client-ID uniqueness, engine-scoped
+exchange IDs, ownership checks, and logical capacity limits are explicit.
 
-The Rust core accepts typed integer IDs and exact instrument units. The
-differential harness generates commands in shared integer ranges, maps native
-numeric IDs to string IDs for the Python reference, then normalizes reference
-event identities and counters before comparing complete results with Rust.
-External decimal parsing belongs to future caller adapters.
-Compatibility tests focus on command results, event order, snapshots, FIFO
-priority, aggregates, and the state after both accepted and rejected commands.
+Rejected commands, including no-liquidity takers, consume no exchange-ID or
+priority counters. Successful amendments receive a fresh exchange ID and reset
+FIFO priority. Transient takers never enter the live client-ID index. These
+rules are tested directly against the native contract.
 
-The native boundary introduces numeric account/client IDs, account-scoped live
-client-ID uniqueness, explicit engine-scoped exchange IDs, ownership checks,
-and logical capacity limits. The shared differential workload uses inputs
-valid in both implementations; native tests cover the new boundary rules.
-A no-liquidity rejection no longer consumes order-ID or priority counters.
-The comparator normalizes this deliberate counter difference and compares
-every event and final live order. Successful amendments retain the Python
-rule of receiving a fresh exchange ID and resetting FIFO priority.
+The native suite includes an independent vector-based matching model,
+directed boundary scenarios, full-capacity delivery, and recovery at every
+boundary of a mixed command trace. Test selection prioritizes observable
+correctness and meaningful state transitions. Python object mechanics and
+superseded contract behavior are not requirements of the Rust engine.
 
 ## Tooling
 
-The default Make targets run native Rust checks:
+The default Make targets run native checks:
 
 - **make format**
 - **make typecheck**
 - **make test**
 - **make test-release**
 
-Python reference checks remain explicit:
+**make replay-release** builds the command replay CLI. The replay and latency
+binaries are **cxchange-replay** and **cxchange-latency** in the matching-core
+crate. The library API and replay format are not yet stable release interfaces;
+snapshots have an explicit version.
 
-- **make python-reference-format**
-- **make python-reference-typecheck**
-- **make python-reference-test**
-- **make differential**
+Continuous integration checks formatting, Clippy, debug tests, and release
+tests with overflow checks. Shared CI is a correctness gate. See
+[correctness evidence](correctness.md) for the coverage map and reproduction
+commands.
 
-The differential target builds the release replay binary first. The replay
-and latency harnesses are **cxchange-replay** and
-**cxchange-latency** binaries in the matching-core crate. The replay format and
-Rust library API remain implementation details; snapshots have an explicit
-version, but the API is not yet a stable release interface.
+## Remaining integration and performance work
 
-Continuous integration checks Rust formatting, Clippy, debug tests, and
-release tests with overflow checks. A separate reference job installs Python
-3.14.8, runs the Python suite, builds the release replay CLI, and compares
-results. Shared CI is a correctness gate, not a latency gate.
+Networking, authentication, risk, settlement, and durable acknowledgement
+belong to later integration layers.
 
-## Acceptance and limits
-
-Correctness gates include typed input validation, counter stability on
-rejection, FIFO order, account-scoped client order IDs, level/order capacity
-boundaries, checked aggregates, full-sweep completeness, deterministic
-responses, and snapshot/replay continuation.
-
-The performance harness will report absolute tail latencies and p99.9/p50,
-including legitimate full sweeps and the ordinary commands queued behind
-them. It will record the actual hardware, workload, occupancy, build mode, and
-sample count. Performance thresholds will be set only after a reproducible
-baseline exists. The initial ordered price map may allocate, so the core makes
-no hard real-time or allocation-free claim.
+The performance harness reports absolute tail latencies and p99.9/p50,
+including legitimate full sweeps and ordinary commands queued behind them.
+Performance thresholds require a reproducible, controlled baseline; current
+workstation results and limitations are recorded in
+[performance methodology](performance.md). The ordered price maps may allocate,
+so the core makes no hard real-time or allocation-free claim.

@@ -1,8 +1,7 @@
 # CXchange
 
 CXchange is building a native Rust matching core for deterministic, price-time
-priority order matching. The Python engine is kept as a behavioral reference
-during the transition; it lives under **reference/python/**.
+priority order matching.
 
 The Rust core is an in-process library. Networking, authentication, risk checks,
 settlement, and durable command acknowledgement belong to later integration
@@ -37,10 +36,10 @@ Ordered maps may allocate; this baseline makes no hard real-time claim.
 | `engine.rs` | Validation, planning, matching, and immutable queries |
 | `snapshot.rs` | Versioned state export and complete restore validation |
 | `execution.rs` | Bounded FIFO admission and reusable response ownership |
-| Replay and latency binaries | Behavioral comparison and measurement |
+| Replay and latency binaries | Command replay, recovery, and measurement |
 
 See [correctness evidence](docs/correctness.md) for the independent model,
-boundary tests, recovery checks, and Python comparison, and
+boundary tests, and recovery checks. See
 [performance methodology](docs/performance.md) for measurement limits.
 
 ## Quickstart
@@ -52,18 +51,9 @@ Install a stable Rust toolchain and make. To run the native workspace checks:
     make test
     make test-release
 
-The release test target enables overflow checks. Python is needed only for the
-reference suite and differential validation. Python 3.14.8 and uv are used for
-those tasks:
-
-    make python-reference-test
-    make python-reference-typecheck
-    make differential
-
-The differential target builds the release replay CLI before invoking the
-comparison harness. These reference checks help detect intentional and
-accidental behavioral differences while the Rust implementation is being
-completed.
+The release test target enables overflow checks. Development and CI use Rust
+only. The legacy test review and selected additional coverage are recorded in
+[the test review](docs/python_test_review.md).
 
 ## Development targets
 
@@ -73,9 +63,6 @@ completed.
 | make typecheck | Run Clippy across workspace targets with warnings denied |
 | make test | Run Rust workspace tests |
 | make test-release | Run release tests with overflow checks enabled |
-| make python-reference-format | Format and lint the Python reference |
-| make python-reference-typecheck | Type-check the Python reference |
-| make python-reference-test | Run Python reference tests |
-| make differential | Compare replay results from Rust and Python |
+| make replay-release | Build the release command replay CLI |
 
 Run `cargo doc --open` for the Rust API and its tested command/recovery example.

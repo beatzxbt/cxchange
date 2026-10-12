@@ -4,9 +4,9 @@ This document records the implementation baseline for the native Rust matching
 core. It guides the first implementation and its compatibility checks; it is
 not a promise of latency or a stable external wire protocol.
 
-The Python reference is maintained under reference/python during the migration.
-The adapter and differential harness make deliberate differences explicit
-instead of treating every Python behavior as a requirement of the core.
+The native contract defines required behavior. The
+[legacy test review](python_test_review.md) records which earlier scenarios add
+coverage and which have been superseded by this contract.
 
 ## Goals and boundaries
 
@@ -138,7 +138,7 @@ actually reach; reaching a maker owned by the taker account rejects the whole
 command before mutation.
 
 A taker can fill the entire eligible opposite book. Unfilled quantity is
-discarded, matching the Python reference: a partial fill succeeds and does not
+discarded: a partial fill succeeds and does not
 rest a remainder, while zero eligible fill returns a no-liquidity error.
 Pre-admission resource pressure rejects or delays admission before matching; it
 does not limit fills after the command is admitted.
@@ -147,10 +147,7 @@ does not limit fills after the command is admitted.
 
 Every rejected command leaves book state, exchange order-ID sequence, and
 priority sequence unchanged. This includes validation, ownership,
-self-trade, capacity, no-liquidity, and sequence-exhaustion errors. This is a
-deliberate normalization of the Python reference's no-liquidity behavior,
-which currently advances counters before returning its error. The Python
-adapter will make the difference explicit in differential results.
+self-trade, capacity, no-liquidity, and sequence-exhaustion errors.
 
 ### Queries, snapshots, and responses
 

@@ -5,10 +5,10 @@ alone are not an acceptance criterion: assertions compare complete responses,
 live state, aggregates, identity counters, and continuation after rejection or
 recovery.
 
-The completed transition passes 70 Rust tests in both debug and release builds
-(including the documentation example), 218 preserved Python tests, type
-checking, and 300,000 differential commands across three seeds. CI also runs
-the native and reference checks on Linux.
+The suite passes 73 tests in each debug and release run, including the
+documentation example. Both builds use overflow checks. CI checks the native
+workspace on Linux. An independent native model provides ongoing behavioral
+comparison without a second language implementation.
 
 | Area | Evidence |
 | --- | --- |
@@ -22,7 +22,7 @@ the native and reference checks on Linux.
 | Replay serialization | `tests/audit_integration.rs`: stdin CLI replay at zero, middle, and end boundaries; exact level aggregates above `u64::MAX` survive JSON |
 | Admission and delivery | `tests/execution.rs` and `tests/audit_integration.rs`: FIFO execution, slow consumers, bounded credits, foreign recycling, dropped leases, and complete configured-book sweeps |
 | Client identity | `tests/identity_contract.rs`: transient takers cannot replace a live maker's account-scoped client mapping |
-| Python comparison | `tools/differential.py`: compare every response/error, final live order, and normalized counters across seeded traces with a serialized restore halfway through |
+| Selected legacy gaps | `tests/behavior_gaps.rs`: amend rejection atomicity and exact size boundaries, identical-value amend priority reset, limited bid/ask depth after state changes, and post-fill client-ID reuse |
 | Public usage | The crate's documentation example exercises reusable command output, a partial fill, and serialized recovery |
 
 ## Reproduce
@@ -32,24 +32,23 @@ make format
 make typecheck
 make test
 make test-release
-make python-reference-test
-make python-reference-typecheck
-make differential
 ```
 
-The default differential run executes 10,000 commands for each of seeds 7, 41,
-and 2026. For a larger comparison:
+All current checks use Rust. The replay CLI is exercised by native integration
+tests; `make replay-release` also builds it for standalone command traces.
 
-```sh
-make replay-release
-uv run --directory reference/python --extra dev python ../../tools/differential.py --commands 100000
-```
+## Legacy test selection
 
-The comparator preserves event order and values. It normalizes exchange IDs
-and priorities only to account for Python consuming counters on no-liquidity
-rejections. Its generated workload uses globally unique client IDs and valid
-shared input ranges. Native tests separately check account-scoped IDs,
-ownership, input rejection, and capacities that Python does not enforce.
+During the initial rewrite, 218 Python tests and 300,000 shared-domain
+comparison commands passed. Those are historical evidence, not current CI
+gates or a claim of one-to-one test migration.
+
+A Sol 6 xhigh agent subsequently reviewed every legacy test module against the
+native contract and suite. The [test review](python_test_review.md) records
+which scenarios were already covered, which additional cases were useful, and
+which implementation details or superseded behaviors were discarded. Selected
+behavioral gaps were added as native tests before removing the Python source,
+tests, dependency files, comparator, and CI job.
 
 ## Review process and limits
 
