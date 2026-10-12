@@ -1,0 +1,34 @@
+{
+  "base_commit": "5d108a743fb6397d58b03879b9aebf98de07e687",
+  "note": "Current worktree reference, including preexisting uncommitted package relocation; baseline pytest: 218 passed.",
+  "files": {
+    ".python-version": "5abd4dc1efa09469b88916c8e4e027a8c266a9b6d06f43ac9da3e30cd00b4ab5",
+    "pyproject.toml": "b7ddd0e5bb2ddad94dac69d49c0778a8aaca7bde449c337e3f34c66ff739c020",
+    "src/cxchange/__init__.py": "0313c4412ad52161e5b095d5ba6e9b5efd1a389be4b2918146ca021497df2f7c",
+    "src/cxchange/engine/__init__.py": "e48ecba352b4ad6462581f9160369302097c251b08521cafe3c11a210bd41795",
+    "src/cxchange/engine/engine.py": "3e166b7f7f3deb4acd0c50a3ef36233a06b27b114b7b24c74136184f49cc2a6e",
+    "src/cxchange/engine/exceptions.py": "9c91ec5d70872a79d3c485201be9de6a35e3fe19e3637c945229743eb71b9f16",
+    "src/cxchange/engine/orderbook.py": "61db3cde65662f0fd8de1efe8ff121615711fc91d93e024c643a256d056de306",
+    "src/cxchange/engine/structures.py": "df7898d403bf594043cb5c31b7195f8d0a4039c6e3ba76f6bb961cc96322597c",
+    "src/cxchange/engine/types.py": "576cb29f2dac6f58ca55e18e237ec6217dba22861b8d2b9f6ea5e55a7087fa89",
+    "tests/__init__.py": "a15a32165800297c2c64fcedb465be29fc228e20d2a04a2a378c0fe38d837ace",
+    "tests/test_matching_engine/__init__.py": "82b9f053e672cdeb16d6d3c4231da382690f60e2634b118abbd3d4b05a671d52",
+    "tests/test_matching_engine/conftest.py": "ca637c1a06252d871dd2595e16860c87fba77d5eac4173c9e7816f22a7dbe94b",
+    "tests/test_matching_engine/test_engine_makers.py": "842f81820bee467cbcc47d81a68c600de8980156bd34af2dc7036ac6ab55d30a",
+    "tests/test_matching_engine/test_engine_queries.py": "4a96213d026383dc9c0e449c146ed32e53a94148f1ff64d6c94bc3c88467b03f",
+    "tests/test_matching_engine/test_engine_snapshot.py": "756a5a8f925393b7f215b3cdf5a5e0fe5900259ce07fc6ec23c401f0fd59a0f5",
+    "tests/test_matching_engine/test_engine_takers.py": "e37abf80666e322d9b9e43b65036a48d3eaee8d6d6d5c6224347b3826a5e209f",
+    "tests/test_matching_engine/test_integration.py": "06b3d31bf2487ecc9cc51143b4a8a26ed7e1774eef71bb0788bd1eec3198660f",
+    "tests/test_matching_engine/test_orderbook.py": "40f7ad6bd3a64ff92402c743894d6913fbf1616a8b10dfc21f504291f7bb7e07",
+    "tests/test_matching_engine/test_price_level.py": "ca96c8060840484bf7ba62b0c6375c668adda2fb325f2eb398f1d0bcd5b7cdef",
+    "tests/test_matching_engine/test_structures.py": "813e1e3b3258caaeb678fc5730c016fc0e8065de65e72f07e9fd98481b2ada6a",
+    "tests/test_matching_engine/test_types.py": "ccb7a3f2ac61b45835b0f66a188ec16b34dcc0be68626f743b76558e7a1bc95a",
+    "uv.lock": "7e3751302ff68365a2acefddcd315b4d521c4bd4d5ac89e35f73845d5df3cb16"
+  },
+  "non_behavioral_adjustments": {
+    "src/cxchange/engine/orderbook.py": {
+      "reason": "Remove two unsupported SortedDict generic annotations so the preserved reference passes ty; no runtime behavior changes.",
+      "sha256": "9f47ad30fab3663a1593b112b8b055287a9a8fb097f3cf7dafe03a126c9e1950"
+    }
+  }
+}

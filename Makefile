@@ -1,45 +1,49 @@
-.PHONY: help format typecheck fix test sync clean %
+.PHONY: help format typecheck fix test test-release python-reference-format \
+	python-reference-typecheck python-reference-test differential replay-release \
+	sync clean
 
 .DEFAULT_GOAL := help
 
-TEST_FLAGS := -xvv -s -p no:anchorpy
+PYTHON_REFERENCE_DIR ?= reference/python
 
-format: ## Format code using ruff
-	uv run ruff format .
-	uv run ruff check --fix --unsafe-fixes .
+format: ## Format all Rust workspace crates
+	cargo fmt --all
 
-typecheck: ## Run static type checking
-	uv run ty check src/
+typecheck: ## Lint and type-check all Rust workspace targets
+	cargo clippy --workspace --all-targets -- -D warnings
 
-fix: ## Run all formatters and typecheck
-	$(MAKE) format typecheck
+fix: format typecheck ## Format and check the Rust workspace
 
-test: ## Run all tests (C + Python)
-	PYTHONPATH=src uv run pytest $(TEST_FLAGS)
+test: ## Run native Rust workspace tests
+	cargo test --workspace
 
-sync: ## Re‑lock and install latest versions
-	uv lock --upgrade       # rebuild uv.lock with newer pins
-	uv sync --extra dev     # install everything into .venv
+test-release: ## Run Rust tests in release mode with overflow checks enabled
+	CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true cargo test --workspace --release
 
-clean: ## Remove pytest and ruff caches
-	find . -type d -name "__pycache__" -delete
-	rm -rf .pytest_cache/ .ruff_cache/
+replay-release: ## Build the release replay CLI for differential validation
+	cargo build --release --bin cxchange-replay
 
-# Pattern rule so additional args do not trigger "No rule to make target"
-%:
-	@:
+python-reference-format: ## Format and lint the Python reference
+	uv run --directory $(PYTHON_REFERENCE_DIR) --extra dev ruff format .
+	uv run --directory $(PYTHON_REFERENCE_DIR) --extra dev ruff check --fix --unsafe-fixes .
 
-# Project‑specific entry points (replace poetry run → uv run)
+python-reference-typecheck: ## Type-check the Python reference
+	uv run --directory $(PYTHON_REFERENCE_DIR) --extra dev ty check src/ tests/ ../../tools/differential.py
 
-help: ## Display this help message
-	@echo 'Usage:'
-	@echo '  make <target>'
-	@echo ''
-	@echo 'Code Quality:'
-	@grep -E '^(format|typecheck|fix):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
-	@echo ''
-	@echo 'Testing:'
-	@grep -E '^(test):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
-	@echo ''
-	@echo 'Other:'
-	@grep -E '^(sync|clean|help):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+python-reference-test: ## Run the Python reference test suite
+	uv run --directory $(PYTHON_REFERENCE_DIR) --extra dev pytest
+
+differential: replay-release ## Compare the Rust replay CLI with the Python reference
+	uv run --directory $(PYTHON_REFERENCE_DIR) --extra dev python ../../tools/differential.py
+
+sync: ## Install Python reference development dependencies
+	uv sync --directory $(PYTHON_REFERENCE_DIR) --extra dev
+
+clean: ## Remove Rust and Python generated files
+	cargo clean
+	rm -rf $(PYTHON_REFERENCE_DIR)/.pytest_cache $(PYTHON_REFERENCE_DIR)/.ruff_cache
+	find $(PYTHON_REFERENCE_DIR) -type d -name "__pycache__" -delete
+
+help: ## Display available targets
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  %-28s %s\n", $$1, $$2}'

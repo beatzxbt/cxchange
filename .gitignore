@@ -6,6 +6,14 @@ __pycache__/
 # C extensions
 *.so
 
+# Rust build output and backup files
+/target/
+**/*.rs.bk
+
+# Local agent instructions
+AGENTS.md
+CLAUDE.md
+
 # Distribution / packaging
 .Python
 build/
@@ -73,7 +81,6 @@ docs/_build/
 
 # PyBuilder
 .pybuilder/
-target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -124,6 +131,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+**/.venv/
 env/
 venv/
 ENV/
