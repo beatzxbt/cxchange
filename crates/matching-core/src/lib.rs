@@ -4,6 +4,26 @@
 //! to the matching-core implementation. Public commands and events use exact
 //! integer instrument units rather than floating-point values.
 //!
+//! # Components and ownership
+//!
+//! [`MatchingEngine`] owns one symbol's state and applies commands sequentially.
+//! [`types`] defines exact units, identities, limits, commands, and events.
+//! Private arena/book modules maintain generation-checked handles and linked
+//! price-level FIFOs; exchange IDs never expose those storage handles.
+//! [`EngineSnapshot`] persists public state and rebuilds storage on restore.
+//! [`execution`] optionally wraps the engine in bounded FIFO admission and
+//! explicit response-credit ownership; it starts no background thread.
+//!
+//! # Failure and allocation boundaries
+//!
+//! Returned command rejections preserve the book and identity counters and
+//! clear the supplied response. Preallocate it with
+//! [`MatchingResponse::with_capacity`] to handle the largest configured sweep.
+//! Arena, scratch, and response buffers reserve storage at startup, but ordered
+//! maps may allocate during commit. Process/allocator failure recovery is
+//! outside the returned-error contract. Queries that collect depth, snapshots,
+//! and full invariant audits also allocate outside the normal command path.
+//!
 //! # Example
 //!
 //! Reuse one response buffer for commands, and persist snapshots outside the

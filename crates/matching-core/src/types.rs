@@ -3,6 +3,12 @@
 //! Public prices count instrument tick-size quanta and public quantities count
 //! lot-size quanta. This representation keeps core arithmetic exact and
 //! independent of floating-point rounding.
+//!
+//! Public newtypes, struct literals, and Serde deserialization represent data;
+//! they do not by themselves prove validity. Engine construction, command
+//! execution, and snapshot restore enforce their respective runtime rules.
+//! Zero quantities are valid in terminal response deltas, although incoming
+//! commands require positive sizes within the instrument bounds.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -13,13 +19,19 @@ pub const MAX_LIVE_ORDERS: usize = 131_072;
 /// Maximum decimal precision accepted for exact instrument units.
 pub const MAX_DECIMAL_SCALE: u8 = 18;
 
-/// Globally unique identifier for an account.
+/// Caller-assigned account identity in the deployment's account domain.
+///
+/// Zero is allowed. The core compares identities for ownership and self-trade;
+/// authentication and assignment of unique account identities belong to callers.
 #[derive(
     Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
 pub struct AccountId(pub u64);
 
 /// Client-provided identifier, unique among that account's live orders.
+///
+/// Zero is allowed. Resting makers reserve the account/ID pair until terminal;
+/// transient takers do not reserve it and may repeat an existing client ID.
 #[derive(
     Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
@@ -39,12 +51,17 @@ pub struct Price(pub u64);
 /// If an instrument has a lot size of `0.001`, `Quantity(100)` represents the
 /// exact size `0.100`. Valid order sizes must also satisfy the instrument's
 /// minimum and optional maximum sizes.
+/// A live maker remainder may fall below that minimum after a partial fill;
+/// response deltas use zero when no quantity remains live.
 #[derive(
     Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
 pub struct Quantity(pub u64);
 
 /// Identity domain for one matching engine instance.
+///
+/// Construction/restore rejects zero. Callers must keep domains unique wherever
+/// independently active engine IDs can be referenced together.
 #[derive(
     Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
@@ -119,7 +136,10 @@ impl DecimalScale {
     }
 }
 
-/// Validated limits for one symbol's order book.
+/// Logical limits for one symbol's order book, validated at engine startup.
+///
+/// The default is 128 orders per level and 1,024 nonempty levels combined.
+/// Their checked product cannot exceed [`MAX_LIVE_ORDERS`].
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EngineConfig {
     /// Maximum live orders at one `(side, price)` level.
@@ -150,6 +170,7 @@ impl EngineConfig {
 }
 
 impl Default for EngineConfig {
+    /// Uses the baseline 128-order, 1,024-level configuration.
     fn default() -> Self {
         Self {
             max_orders_per_level: 128,
@@ -196,6 +217,9 @@ impl InstrumentSpec {
 
     /// Checks whether a quantity satisfies this instrument's configured size bounds.
     ///
+    /// These bounds apply to incoming add/amend/take commands, not the remaining
+    /// quantity of a partially filled live maker.
+    ///
     /// # Arguments
     ///
     /// * `size` - Size in lot-size quanta to validate.
@@ -237,7 +261,9 @@ impl Side {
 pub enum OrderStatus {
     /// A newly accepted order with no fills.
     Open,
-    /// A live order that has executed part of its original size.
+    /// A maker retains quantity, or a taker executed less than its requested size.
+    ///
+    /// Partially filled takers discard their remainder and are never live.
     PartiallyFilled,
     /// An order whose full requested size has executed.
     Filled,
@@ -248,6 +274,10 @@ pub enum OrderStatus {
 }
 
 /// A command applied sequentially to one symbol's matching engine.
+///
+/// Prices and sizes are instrument quanta. An add must not cross; an amend
+/// always replaces identity/priority; a take uses an inclusive price limit and
+/// never rests a remainder. Every returned rejection preserves book/counters.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
@@ -286,7 +316,7 @@ pub enum Command {
     Take {
         /// Account submitting the taking order.
         account_id: AccountId,
-        /// Client-chosen ID for the taking order.
+        /// Client-chosen ID for the taking order; never reserved in the live index.
         client_id: ClientOrderId,
         /// Direction of the taking order.
         side: Side,
@@ -358,6 +388,10 @@ pub struct OrderDelta {
 }
 
 /// Public aggregate change for one side and price level.
+///
+/// Size/count describe state after the reported change, not arithmetic deltas.
+/// Zero size/count removes a level. A same-price amend emits removal and final
+/// insertion states as two ordered entries for the same side and price.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LevelDelta {
     /// Price of the changed level in tick-size quanta.
@@ -371,6 +405,14 @@ pub struct LevelDelta {
 }
 
 /// Complete ordered result of one accepted matching command.
+///
+/// Order deltas place the taker before its makers and the replaced order before
+/// its replacement. Fills follow price-time order. Takers emit one final level
+/// aggregate per touched level; amendments emit removal then insertion states.
+///
+/// [`Default`] creates empty vectors without reserving space. Use
+/// [`Self::with_capacity`] for command execution and reuse it between commands.
+/// Deserializing or cloning a response does not promise maximum-sweep capacity.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MatchingResponse {
     /// Executions in price-time matching order.
@@ -507,7 +549,7 @@ pub enum MatchingError {
     OutputCapacity,
     /// An exchange sequence or identity counter cannot advance safely.
     CounterExhausted,
-    /// A restored snapshot failed validation.
+    /// Snapshot validation or an explicit internal invariant check failed.
     InvalidSnapshot,
 }
 

@@ -61,8 +61,12 @@ only. The legacy test review and selected additional coverage are recorded in
 | --- | --- |
 | make format | Format Rust workspace code |
 | make typecheck | Run Clippy across workspace targets with warnings denied |
+| make docs | Build public and internal rustdoc with warnings denied |
 | make test | Run Rust workspace tests |
 | make test-release | Run release tests with overflow checks enabled |
 | make replay-release | Build the release command replay CLI |
 
-Run `cargo doc --open` for the Rust API and its tested command/recovery example.
+Run `make docs` to build both the public API and private storage/planning
+documentation at `target/doc/matching_core/index.html`. The crate overview
+includes a command/recovery example. Run `cargo doc --open` for the public API
+view.

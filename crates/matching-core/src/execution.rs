@@ -3,6 +3,16 @@
 //! `ExecutionAdapter` reserves an output credit before admitting each command,
 //! processes admitted commands in FIFO order, and returns credits explicitly
 //! after consumers finish reading completed responses.
+//!
+//! The adapter is a synchronous pump: the caller admits commands, calls
+//! [`ExecutionAdapter::process_next`], takes results, then recycles them. It
+//! starts no thread and does not wait for scheduled timestamps. Queue pressure
+//! is an admission outcome; a matching rejection is a completed result and
+//! holds its credit until recycling just like a successful command.
+//!
+//! Credits transition `Free -> Queued -> Completed -> Leased -> Free`. Their
+//! fixed total bounds queued, completed, and consumer-held results together,
+//! so execution always has room to record an admitted command's completion.
 
 use crate::{Command, MatchingEngine, MatchingError, MatchingResponse};
 use std::collections::VecDeque;
@@ -76,6 +86,11 @@ impl fmt::Display for AdmissionError {
 impl std::error::Error for AdmissionError {}
 
 /// Timings collected from the scheduled arrival through result delivery.
+///
+/// Delivery means the consumer calls `take_completed`, not that a network peer
+/// receives the event. Scheduled intervals include producer/admission delay;
+/// queue wait starts only at admission. Durations saturate at zero when an
+/// explicitly supplied scheduled timestamp lies in the future.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ExecutionTimings {
     /// Time from adapter admission until execution begins.
@@ -99,11 +114,17 @@ pub struct ExecutionTimings {
 #[must_use = "recycle completed responses to return their bounded pool credit"]
 #[derive(Debug)]
 pub struct CompletedResponse {
+    /// Admission identity retained independently of matching order IDs.
     submission_id: SubmissionId,
+    /// Matching success or rejection recorded for the admitted command.
     outcome: Result<(), MatchingError>,
+    /// Complete payload whose allocations must be recycled to the pool.
     response: MatchingResponse,
+    /// Intervals finalized when the consumer takes this result.
     timings: ExecutionTimings,
+    /// Originating credit index, meaningful only together with `owner`.
     slot_index: usize,
+    /// Pool identity proving which adapter may accept this credit back.
     owner: Arc<PoolOwner>,
 }
 
@@ -135,14 +156,23 @@ impl CompletedResponse {
 /// explicit recycling. Queue and event storage are reserved during startup, so
 /// reaching configured limits produces an admission error instead of silently
 /// dropping an accepted command or growing the queues.
+/// The underlying engine's ordered maps can still allocate during matching.
 pub struct ExecutionAdapter {
+    /// Exclusive mutable matching state; consumers receive only shared queries.
     engine: MatchingEngine,
+    /// Admission limits independent of allocator-provided vector capacity.
     config: ExecutionConfig,
+    /// FIFO of admitted commands, each owning a reserved response slot.
     commands: VecDeque<QueuedCommand>,
+    /// FIFO of completion metadata; payloads remain in their reserved slots.
     completed: VecDeque<CompletedRecord>,
+    /// Fixed credit ledger whose buffers leave only while consumer-leased.
     slots: Vec<ResponseSlot>,
+    /// Reusable slot indices; a credit appears here only in the free state.
     free_slots: Vec<usize>,
+    /// Next unused admission identity; failed admission never advances it.
     next_submission_id: u64,
+    /// Allocation identity used to reject recycling from another adapter.
     owner: Arc<PoolOwner>,
 }
 
@@ -158,6 +188,10 @@ impl ExecutionAdapter {
     ///
     /// A ready adapter, or a startup error if a capacity is invalid or storage
     /// cannot be reserved.
+    ///
+    /// Each response credit reserves a complete maximum command result for the
+    /// engine's configuration. Memory therefore scales with response capacity
+    /// times the configured sweep size, independently of typical result size.
     pub fn new(
         engine: MatchingEngine,
         config: ExecutionConfig,
@@ -226,8 +260,9 @@ impl ExecutionAdapter {
 
     /// Admits a command while preserving its independently scheduled arrival.
     ///
-    /// This form is intended for open-loop producers and deterministic latency
-    /// harnesses. A scheduled time may be earlier or later than the call time.
+    /// This form is intended for open-loop producers and latency harnesses.
+    /// A scheduled time may be earlier or later than the call time; it records
+    /// measurement metadata and does not defer execution or reorder the FIFO.
     ///
     /// # Arguments
     ///
@@ -273,6 +308,8 @@ impl ExecutionAdapter {
     ///
     /// A trading rejection is recorded as a completed matching outcome; it is
     /// distinct from admission failure and never removes a later queued command.
+    /// This call synchronously runs the entire command, including a legal full
+    /// sweep. It neither truncates work nor releases the response credit.
     ///
     /// # Returns
     ///
@@ -351,6 +388,8 @@ impl ExecutionAdapter {
     ///
     /// `Ok(())` when the response credit is restored, or the original value
     /// when it belongs to another adapter or its credit is not leased here.
+    /// Recycling retains output allocations; the engine clears their used
+    /// entries when this credit next executes a command.
     #[allow(clippy::result_large_err)]
     pub fn recycle(&mut self, completed: CompletedResponse) -> Result<(), CompletedResponse> {
         if !Arc::ptr_eq(&self.owner, &completed.owner)
@@ -400,36 +439,63 @@ impl ExecutionAdapter {
     }
 }
 
+/// Credit lifecycle; only `Free` slots may be selected for admission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SlotState {
+    /// Buffer is adapter-owned and its index is in `free_slots`.
     Free,
+    /// An admitted command owns the adapter-held buffer until it executes.
     Queued,
+    /// Matching finished; payload and outcome await consumer delivery.
     Completed,
+    /// A `CompletedResponse` owns the buffer outside the adapter.
     Leased,
 }
 
+/// One response credit's payload and lifecycle bookkeeping.
 struct ResponseSlot {
+    /// Present except while a consumer holds a leased response.
     response: Option<MatchingResponse>,
+    /// Present only after execution and before `take_completed` transfers it.
     outcome: Option<Result<(), MatchingError>>,
+    /// Lifecycle guard used for admission, delivery, and recycling assertions.
     state: SlotState,
 }
 
+/// Admitted work with a response reservation and original measurement timestamps.
 struct QueuedCommand {
+    /// Identity assigned only after admission succeeds.
     submission_id: SubmissionId,
+    /// Complete command executed by the sole engine owner.
     command: Command,
+    /// Reserved credit that guarantees complete output space.
     slot_index: usize,
+    /// Producer-supplied arrival metadata; not an execution deadline.
     scheduled_at: Instant,
+    /// Time the command actually entered this adapter.
     admitted_at: Instant,
 }
 
+/// FIFO delivery metadata referring to a completed slot's payload.
 struct CompletedRecord {
+    /// Original admission identity retained through delivery.
     submission_id: SubmissionId,
+    /// Completed credit whose payload is still adapter-owned.
     slot_index: usize,
+    /// Original producer-supplied arrival time.
     scheduled_at: Instant,
+    /// Actual adapter admission time.
     admitted_at: Instant,
+    /// Time immediately before invoking the matching engine.
     started_at: Instant,
+    /// Time immediately after the matching engine returned.
     completed_at: Instant,
 }
 
+/// Unique pool allocation identity retained by every outstanding lease.
+///
+/// `Arc::ptr_eq` rejects foreign recycling even when slot indices coincide.
+/// A lease keeps the token alive after its adapter is dropped, preventing a
+/// later adapter from reusing that allocation identity while the lease exists.
 #[derive(Debug)]
 struct PoolOwner;

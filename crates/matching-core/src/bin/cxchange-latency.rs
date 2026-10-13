@@ -2,6 +2,13 @@
 //!
 //! It measures add/cancel/amend churn, FIFO cancel positions, near-full book
 //! updates, full sweeps, commands scheduled behind sweeps, and slow consumers.
+//!
+//! Run the release binary with `--help` for sample/rate/output controls. One
+//! thread catches up independently scheduled arrival offsets, invokes matching,
+//! and drains results. It models producer lag, not a concurrent producer.
+//! Primary churn uses a smaller book; capacity/sweep/pressure profiles are
+//! explicitly exploratory. Setup, result sorting, and JSON rendering are
+//! outside measured matching calls. See `docs/performance.md` for limits.
 
 use matching_core::execution::{
     AdmissionError, CompletedResponse, ExecutionAdapter, ExecutionConfig, ExecutionTimings,
@@ -19,14 +26,22 @@ use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::time::{Duration, Instant};
 
+/// Orders-per-level limit for ordinary churn, distinct from default-capacity profiles.
 const PER_LEVEL: usize = 32;
+/// Combined level limit for ordinary churn.
 const LEVELS: usize = 32;
+/// Requested arrivals per primary operation class, before pressure or skipped dependencies.
 const DEFAULT_SAMPLES: usize = 1_000_000;
+/// Arrival cap for exploratory near-full and FIFO-position workloads.
 const PROFILE_SAMPLES: usize = 10_000;
+/// Offered ordinary arrival frequency, rounded to an integer nanosecond interval.
 const DEFAULT_RATE: u64 = 50_000;
+/// Same-time ordinary arrivals attempted after the mixed profile's blocking sweep.
 const MIXED_BURST_COMMANDS: usize = 24;
+/// Small mixed-profile pool deliberately exposing pre-admission pressure.
 const MIXED_RESPONSE_CREDITS: usize = 4;
 
+/// Runs the measurement tool, reporting setup/argument/output failures on stderr.
 fn main() {
     if let Err(error) = run() {
         eprintln!("cxchange-latency: {error}");
@@ -34,6 +49,7 @@ fn main() {
     }
 }
 
+/// Selects profile sizes, runs them sequentially, and writes one combined report.
 fn run() -> Result<(), String> {
     let args = parse_args()?;
     if args.help {
@@ -81,16 +97,24 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+/// Parsed CLI controls; positivity is checked when selecting effective sizes.
 #[derive(Default)]
 struct Args {
+    /// Override for requested primary arrivals per class.
     samples: Option<usize>,
+    /// Override for independently seeded maximum-book sweeps.
     sweep_samples: Option<usize>,
+    /// Requested ordinary arrivals per second.
     rate: u64,
+    /// Destination file, or stdout when absent.
     output: Option<PathBuf>,
+    /// Use reduced defaults while retaining all workload kinds.
     quick: bool,
+    /// Print usage and skip measurement.
     help: bool,
 }
 
+/// Parses known options without starting any workloads.
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         rate: DEFAULT_RATE,
@@ -115,6 +139,7 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
+/// Parses a required option value and names its flag in any error.
 fn parse_value<T: std::str::FromStr>(name: &str, value: Option<String>) -> Result<T, String> {
     value
         .ok_or_else(|| format!("{name} requires a value"))?
@@ -122,6 +147,7 @@ fn parse_value<T: std::str::FromStr>(name: &str, value: Option<String>) -> Resul
         .map_err(|_| format!("invalid value for {name}"))
 }
 
+/// Prints CLI usage, default sample counts, and arrival-rate controls.
 fn print_help() {
     println!(
         "Usage: cargo run --release -p matching-core --bin cxchange-latency -- [OPTIONS]\n\
@@ -134,17 +160,31 @@ fn print_help() {
     );
 }
 
+/// Workload metadata and per-operation measurements rendered after execution.
 struct Report {
+    /// Stable profile name used in stored JSON baselines.
     name: &'static str,
+    /// Distinguishes primary requested-size runs from exploratory scenarios.
     sample_intent: &'static str,
+    /// Actual logical book limits used by this workload.
     engine_config: EngineConfig,
+    /// Adapter command admission limit.
     command_capacity: usize,
+    /// Adapter response-credit count, including consumer-held results.
     response_capacity: usize,
+    /// Offered per-class size when meaningful; not a successful-sample count.
     requested_commands_per_class: Option<usize>,
+    /// Allows p99.9 only when the class also has enough successful samples.
     report_tail: bool,
+    /// Disjoint classes plus any explicitly named combined-class aggregate.
     metrics: Vec<Stats>,
 }
 
+/// Alternates maker add/cancel while retaining a target across admission retries.
+///
+/// `warm` keeps an anchor live at the same price; it does not control CPU caches.
+/// A failed cancel admission must keep its target pending so later adds cannot
+/// leak resting makers. Predicted IDs advance only for admitted, valid adds.
 fn run_add_cancel(name: &'static str, samples: usize, interval_ns: u64, warm: bool) -> Report {
     let config = book_config();
     let mut engine = engine(1, config);
@@ -230,6 +270,10 @@ fn run_add_cancel(name: &'static str, samples: usize, interval_ns: u64, warm: bo
     }
 }
 
+/// Repeatedly replaces one resting maker at independently scheduled arrivals.
+///
+/// FIFO admission and valid fixture inputs let subsequent queued amendments
+/// reference the fresh ID predicted for the preceding admitted amendment.
 fn run_amend(samples: usize, interval_ns: u64) -> Report {
     let config = book_config();
     let mut engine = engine(2, config);
@@ -276,6 +320,10 @@ fn run_amend(samples: usize, interval_ns: u64) -> Report {
     }
 }
 
+/// Seeds the default full book, then cancels/replenishes rotating price levels.
+///
+/// A pending replacement survives admission pressure; dependent cancels are
+/// skipped rather than changing the intended occupancy without accounting.
 fn run_near_full(samples: usize, interval_ns: u64) -> Report {
     let config = EngineConfig::default();
     let mut engine = engine(3, config);
@@ -354,6 +402,10 @@ fn run_near_full(samples: usize, interval_ns: u64) -> Report {
     }
 }
 
+/// Compares head/middle/tail cancellation within one level of a full default book.
+///
+/// Successful admissions update a local FIFO model and schedule replacement
+/// adds. The combined cancel metric merges the three disjoint position classes.
 fn run_cancel_positions(samples: usize, interval_ns: u64) -> Report {
     let config = EngineConfig::default();
     let mut engine = engine(4, config);
@@ -448,6 +500,10 @@ fn run_cancel_positions(samples: usize, interval_ns: u64) -> Report {
     }
 }
 
+/// Measures complete default-capacity sweeps, rebuilding makers outside each sample.
+///
+/// Each sweep fills all 131,072 makers. This exploratory profile disables
+/// p99.9 reporting regardless of the requested sample count.
 fn run_full_sweep(samples: usize) -> Report {
     let mut stats = Stats::new("full_sweep");
     stats.reserve_latency(samples);
@@ -484,6 +540,11 @@ fn run_full_sweep(samples: usize) -> Report {
     }
 }
 
+/// Submits same-time arrivals after a blocking sweep while retaining its timestamp.
+///
+/// The producer cannot run during matching; preserved timestamps include that
+/// lag. The small response pool intentionally rejects most arrivals. Interpret
+/// actual per-class admissions, not the offered mix, when reading latency data.
 fn run_mixed_sweep() -> Report {
     let config = EngineConfig::default();
     let mut engine = engine(6, config);
@@ -564,6 +625,10 @@ fn run_mixed_sweep() -> Report {
     }
 }
 
+/// Holds all completed credits, attempts more work, then drains and recycles.
+///
+/// This is a one-time saturation check, not sustained slow-consumer throughput.
+/// Synthetic scheduled offsets may be in the future; adapter intervals saturate.
 fn run_slow_consumer() -> Report {
     let config = book_config();
     let mut adapter = adapter(engine(7, config), 32, 32);
@@ -616,6 +681,7 @@ fn run_slow_consumer() -> Report {
     }
 }
 
+/// Populates every configured ask slot with a unit maker before sweep timing.
 fn seed_full_ask_book(
     engine: &mut MatchingEngine,
     response: &mut MatchingResponse,
@@ -635,6 +701,7 @@ fn seed_full_ask_book(
     }
 }
 
+/// Builds a buy taker large enough to consume every seeded ask at its maker price.
 fn sweep_command(config: EngineConfig) -> Command {
     Command::Take {
         account_id: AccountId(10),
@@ -645,6 +712,13 @@ fn sweep_command(config: EngineConfig) -> Command {
     }
 }
 
+/// Drives scheduled arrivals and synchronous execution from a single thread.
+///
+/// `on_arrival` sees the original scheduled timestamp for every due event.
+/// Catch-up batches precede the next execution, so stalls cause visible queue
+/// pressure and producer delay instead of shifting the arrival schedule.
+/// When ahead of schedule, the driver spins; after each execution it delivers
+/// and recycles ready responses. Callers reserve statistics before entering.
 fn drive<F>(
     adapter: &mut ExecutionAdapter,
     event_count: usize,
@@ -680,6 +754,7 @@ fn drive<F>(
     debug_assert!(outstanding.is_empty());
 }
 
+/// Computes an independent offset, clamping nanoseconds and falling back on overflow.
 fn scheduled_at(start: Instant, index: usize, interval_ns: u64) -> Instant {
     let offset = u128::from(interval_ns).saturating_mul(index as u128);
     start
@@ -687,12 +762,19 @@ fn scheduled_at(start: Instant, index: usize, interval_ns: u64) -> Instant {
         .unwrap_or(start)
 }
 
+/// Admission-order tracker associating a completed result with its metric class.
 #[derive(Clone, Copy)]
 struct Tracked {
+    /// Expected FIFO submission identity.
     id: SubmissionId,
+    /// Destination class, or `None` for unmeasured supporting commands.
     metric: Option<usize>,
 }
 
+/// Attempts admission and records pressure separately from matching outcomes.
+///
+/// Only admitted commands enter `outstanding`; every one must later be drained
+/// in FIFO order. Occupancy is sampled here, not live book occupancy.
 fn submit(
     adapter: &mut ExecutionAdapter,
     outstanding: &mut VecDeque<Tracked>,
@@ -734,6 +816,7 @@ fn submit(
     }
 }
 
+/// Delivers ready results in tracker order, observes them, and returns each credit.
 fn drain(adapter: &mut ExecutionAdapter, outstanding: &mut VecDeque<Tracked>, stats: &mut [Stats]) {
     while let Some(completed) = adapter.take_completed() {
         let tracked = outstanding
@@ -749,6 +832,7 @@ fn drain(adapter: &mut ExecutionAdapter, outstanding: &mut VecDeque<Tracked>, st
     }
 }
 
+/// Audits an exhausted workload's queues, returned credits, and matching state.
 fn validate(adapter: &ExecutionAdapter) {
     assert_eq!(
         adapter.queued_len(),
@@ -767,16 +851,25 @@ fn validate(adapter: &ExecutionAdapter) {
         .expect("workload preserves matching invariants");
 }
 
+/// Successful-operation timing components stored as integer nanoseconds.
+///
+/// Vectors are reserved before a workload and sorted only during rendering.
 #[derive(Clone)]
 struct Latencies {
+    /// Includes producer/admission lag, matching, and consumer delivery delay.
     scheduled_to_delivery: Vec<u64>,
+    /// Adapter admission to matching start.
     queue_wait: Vec<u64>,
+    /// Time inside the matching call.
     execution: Vec<u64>,
+    /// Matching completion to consumer take.
     delivery_wait: Vec<u64>,
+    /// Original scheduled arrival to matching start, including producer lag.
     scheduled_to_start: Vec<u64>,
 }
 
 impl Latencies {
+    /// Creates empty measurement vectors; callers reserve before timed loops.
     fn new() -> Self {
         Self {
             scheduled_to_delivery: Vec::new(),
@@ -787,6 +880,7 @@ impl Latencies {
         }
     }
 
+    /// Appends all timing components for one successful matching outcome.
     fn push(&mut self, timings: ExecutionTimings) {
         self.scheduled_to_delivery
             .push(duration_ns(timings.scheduled_to_delivery));
@@ -797,6 +891,7 @@ impl Latencies {
             .push(duration_ns(timings.scheduled_to_start));
     }
 
+    /// Moves another class's samples into these vectors for aggregate reporting.
     fn merge(&mut self, other: &mut Self) {
         self.scheduled_to_delivery
             .append(&mut other.scheduled_to_delivery);
@@ -808,33 +903,60 @@ impl Latencies {
     }
 }
 
+/// Admission, result-shape, occupancy, and successful timing evidence for a class.
+///
+/// Skipped dependent arrivals are not attempted admissions. Matching rejections
+/// contribute to result-shape counters but never to valid-operation percentiles.
 #[derive(Clone)]
 struct Stats {
+    /// Operation class label used in report JSON.
     name: &'static str,
+    /// Calls offered to adapter admission, excluding dependency skips.
     attempted: u64,
+    /// Commands granted a queue entry and response credit.
     admitted: u64,
+    /// Failed admissions across all pressure/exhaustion causes.
     admission_rejected: u64,
+    /// Admitted commands that completed with a matching rejection.
     matching_rejected: u64,
+    /// Admission failures due to command queue capacity.
     queue_full: u64,
+    /// Admission failures due to unavailable response credits.
     response_pool_full: u64,
+    /// Admission failures due to submission counter exhaustion.
     submission_id_full: u64,
+    /// Scheduled operations omitted because their prerequisite was not admitted.
     skipped_dependencies: u64,
+    /// Total returned fills across completed commands.
     fills: u64,
+    /// Total returned order updates across completed commands.
     order_deltas: u64,
+    /// Total returned level updates across completed commands.
     level_deltas: u64,
+    /// Completed commands returning no fills, including matching rejections.
     zero_fills: u64,
+    /// Completed commands returning exactly one fill.
     single_fills: u64,
+    /// Completed commands returning more than one fill.
     multiple_fills: u64,
+    /// Completed commands returning exactly the maximum supported fill count.
     full_sweeps: u64,
+    /// Completed commands returning no level updates, including rejections.
     zero_level_changes: u64,
+    /// Completed commands returning one level update.
     one_level_change: u64,
+    /// Completed commands returning multiple level updates, including amendments.
     multiple_level_changes: u64,
+    /// Largest sampled admitted-command queue length.
     peak_queue_depth: usize,
+    /// Largest sampled credit use across queued, completed, and leased results.
     peak_response_credits_in_use: usize,
+    /// Timing samples for successful matching outcomes only.
     latency: Latencies,
 }
 
 impl Stats {
+    /// Starts one class with zero counters and empty timing vectors.
     fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -862,6 +984,7 @@ impl Stats {
         }
     }
 
+    /// Reserves all timing vectors outside the workload loop.
     fn reserve_latency(&mut self, samples: usize) {
         self.latency.scheduled_to_delivery.reserve(samples);
         self.latency.queue_wait.reserve(samples);
@@ -870,6 +993,7 @@ impl Stats {
         self.latency.scheduled_to_start.reserve(samples);
     }
 
+    /// Updates adapter queue/credit peaks; this does not measure book occupancy.
     fn observe_occupancy(&mut self, queue_depth: usize, response_credits_in_use: usize) {
         self.peak_queue_depth = self.peak_queue_depth.max(queue_depth);
         self.peak_response_credits_in_use = self
@@ -877,6 +1001,7 @@ impl Stats {
             .max(response_credits_in_use);
     }
 
+    /// Records a completed result while excluding matching rejections from latency.
     fn observe(&mut self, completed: &CompletedResponse) {
         if completed.outcome().is_err() {
             self.matching_rejected += 1;
@@ -902,6 +1027,7 @@ impl Stats {
         }
     }
 
+    /// Combines disjoint classes by summing counts, taking peaks, and moving samples.
     fn merge(&mut self, mut other: Self) {
         self.attempted += other.attempted;
         self.admitted += other.admitted;
@@ -929,10 +1055,12 @@ impl Stats {
     }
 }
 
+/// Converts a duration to report nanoseconds, clamping instead of wrapping.
 fn duration_ns(duration: Duration) -> u64 {
     duration.as_nanos().min(u128::from(u64::MAX)) as u64
 }
 
+/// Constructs a benchmark instrument with positive units and a bounded command size.
 fn engine(id: u64, config: EngineConfig) -> MatchingEngine {
     MatchingEngine::new(
         EngineId(id),
@@ -954,6 +1082,7 @@ fn engine(id: u64, config: EngineConfig) -> MatchingEngine {
     .expect("valid benchmark engine configuration")
 }
 
+/// Reserves the requested command queue and full-sweep response credits before timing.
 fn adapter(
     engine: MatchingEngine,
     command_capacity: usize,
@@ -969,6 +1098,7 @@ fn adapter(
     .expect("bounded benchmark storage is available")
 }
 
+/// Returns the smaller ordinary-churn book limits, not the engine defaults.
 fn book_config() -> EngineConfig {
     EngineConfig {
         max_orders_per_level: PER_LEVEL,
@@ -976,10 +1106,12 @@ fn book_config() -> EngineConfig {
     }
 }
 
+/// Allocates reusable seed output sized to the workload's full legal result.
 fn response_for(config: &EngineConfig) -> MatchingResponse {
     MatchingResponse::with_capacity(config).expect("response fits configured book")
 }
 
+/// Applies an untimed setup command using reusable seed output.
 fn execute(
     engine: &mut MatchingEngine,
     command: Command,
@@ -988,6 +1120,7 @@ fn execute(
     engine.execute_into(&command, response)
 }
 
+/// Wraps raw fixture integers in the library's exact command types.
 fn add_command(account: u64, client: u64, side: Side, price: u64, size: u64) -> Command {
     Command::Add {
         account_id: AccountId(account),
@@ -998,6 +1131,10 @@ fn add_command(account: u64, client: u64, side: Side, price: u64, size: u64) -> 
     }
 }
 
+/// Renders measured profiles and best-effort host metadata after all timed work.
+///
+/// Requested counts/rate remain distinct from actual samples/effective interval.
+/// Named profiles and scheduler notes disclose exploratory and pressure cases.
 fn render_json(
     reports: &[Report],
     samples: usize,
@@ -1109,6 +1246,7 @@ fn render_json(
     out
 }
 
+/// Writes class counters, result classifications, and successful-operation latencies.
 fn write_stats(out: &mut String, stats: &Stats, report_tail: bool) {
     writeln!(
         out,
@@ -1146,6 +1284,7 @@ fn write_stats(out: &mut String, stats: &Stats, report_tail: bool) {
     write!(out, "       }}}}").unwrap();
 }
 
+/// Renders each timing boundary independently with the same tail-reporting policy.
 fn write_latency_components(out: &mut String, latency: &Latencies, report_tail: bool) {
     let entries = [
         ("scheduled_to_delivery", &latency.scheduled_to_delivery),
@@ -1161,6 +1300,10 @@ fn write_latency_components(out: &mut String, latency: &Latencies, report_tail: 
     }
 }
 
+/// Sorts a sample copy and writes nearest-rank percentiles without changing raw data.
+///
+/// p99.9 requires both profile opt-in and at least 1,000 successful samples.
+/// Missing tails or a zero median produce a null p99.9/p50 ratio.
 fn write_percentiles(out: &mut String, values: &[u64], report_tail: bool) {
     let mut sorted = values.to_vec();
     sorted.sort_unstable();
@@ -1188,6 +1331,10 @@ fn write_percentiles(out: &mut String, values: &[u64], report_tail: bool) {
     .unwrap();
 }
 
+/// Selects `ceil(sample_count * numerator / denominator)` from sorted samples.
+///
+/// Uses one-based nearest rank, returning `None` for an empty slice. Callers
+/// supply a positive denominator and a percentile fraction in `(0, 1]`.
 fn percentile(sorted: &[u64], numerator: usize, denominator: usize) -> Option<u64> {
     if sorted.is_empty() {
         return None;
@@ -1199,10 +1346,12 @@ fn percentile(sorted: &[u64], numerator: usize, denominator: usize) -> Option<u6
     sorted.get(rank - 1).copied()
 }
 
+/// Emits a JSON integer or `null` for an unavailable measurement.
 fn optional_u64(value: Option<u64>) -> String {
     value.map_or_else(|| "null".to_owned(), |number| number.to_string())
 }
 
+/// Probes the runtime PATH's `rustc`, which need not be the binary's build compiler.
 fn rustc_version() -> Option<String> {
     let output = ProcessCommand::new("rustc")
         .arg("--version")
@@ -1214,6 +1363,7 @@ fn rustc_version() -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
+/// Reads a best-effort macOS/Linux CPU label, leaving unsupported hosts unknown.
 fn cpu_model() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
@@ -1240,6 +1390,7 @@ fn cpu_model() -> Option<String> {
     None
 }
 
+/// Quotes JSON strings, escaping control characters, quotes, and backslashes.
 fn json_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');

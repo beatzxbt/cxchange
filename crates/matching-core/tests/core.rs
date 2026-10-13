@@ -1,3 +1,9 @@
+//! Public command contracts, storage transitions, and maximum-capacity matching.
+//!
+//! Directed fixtures check response order, ownership, rejection atomicity,
+//! FIFO replacement, partial fills, and a complete default-book sweep. Run with
+//! `cargo test -p matching-core --test core` in debug or release mode.
+
 use matching_core::{
     AccountId, ClientOrderId, Command, DecimalScale, EngineConfig, EngineId, InstrumentSpec,
     MatchingEngine, MatchingError, MatchingResponse, OrderId, OrderStatus, Price, Quantity, Side,

@@ -1,4 +1,8 @@
 //! Maximum-capacity matching through admission, queued execution, and delivery.
+//!
+//! Checks every maker fill/order delta and all level removals for a 131,072-order
+//! sweep, then executes later work while the consumer still owns that sweep's
+//! response. This catches truncation and accidental reuse of leased output.
 
 use matching_core::execution::{AdmissionError, ExecutionAdapter, ExecutionConfig};
 use matching_core::{

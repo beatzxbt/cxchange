@@ -9,11 +9,13 @@ use std::fmt;
 /// A private stable reference to one arena slot and its current generation.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct Handle {
+    /// Slot offset, meaningful only in the arena that issued this handle.
     pub(crate) index: u32,
+    /// Reuse epoch that must match the slot before its value can be accessed.
     pub(crate) generation: u64,
 }
 
-/// Failure to create an arena with an addressable slot count.
+/// Startup failure when validating or reserving a fixed arena.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ArenaError {
     /// The requested slot count cannot be represented by private handles.
@@ -33,16 +35,23 @@ impl fmt::Display for ArenaError {
 
 impl std::error::Error for ArenaError {}
 
+/// Storage cell that is either live, chained as free, or permanently retired.
 struct Slot<T> {
+    /// Epoch advanced on removal before this slot can be reused.
     generation: u64,
+    /// Next reusable slot; irrelevant while a value occupies the cell.
     next_free: Option<u32>,
+    /// Live payload, or `None` for free and retired cells.
     value: Option<T>,
 }
 
 /// A fixed-capacity slot arena with generation-checked handles.
 pub(crate) struct Arena<T> {
+    /// Fixed-length backing storage, never grown after startup.
     slots: Vec<Slot<T>>,
+    /// First reusable slot; `None` can mean full or generation-retired capacity.
     free_head: Option<u32>,
+    /// Live payload count, excluding free and retired slots.
     len: usize,
 }
 
@@ -93,7 +102,9 @@ impl<T> Arena<T> {
     ///
     /// # Returns
     ///
-    /// The handle on success, or the uninserted value if the arena is full.
+    /// The handle on success, or the uninserted value if no reusable slot is
+    /// available. Generation retirement can exhaust reuse before `len` reaches
+    /// the fixed capacity. This operation does not allocate.
     pub(crate) fn insert(&mut self, value: T) -> Result<Handle, T> {
         let Some(index) = self.free_head else {
             return Err(value);

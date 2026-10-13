@@ -1,3 +1,9 @@
+//! Snapshot schema validation and deterministic continuation after recovery.
+//!
+//! Valid fixtures exercise empty/complex state and partial remainders; mutated
+//! fixtures isolate malformed identities, ordering, bounds, and capacities.
+//! Run with `cargo test -p matching-core --test snapshot`.
+
 use matching_core::{
     AccountId, ClientOrderId, Command, DecimalScale, EngineConfig, EngineId, EngineSnapshot,
     InstrumentSpec, LevelSnapshot, MatchingEngine, MatchingError, MatchingResponse, Order, OrderId,

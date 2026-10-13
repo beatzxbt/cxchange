@@ -3,6 +3,12 @@
 //! Snapshots contain public live orders and FIFO order; private arena handles
 //! are rebuilt during restore so no storage implementation leaks into the
 //! serialized representation.
+//!
+//! Version 1 persists the next unused counters and requires
+//! `next_order_id = next_sequence + 1`; each live order has the same one-step
+//! relation between public ID and FIFO sequence. Order, client, and priority
+//! uniqueness spans both sides. Restore allocates and rebuilds indexes outside
+//! the command path; it is a state reconstruction boundary, not a durable log.
 
 use std::collections::BTreeSet;
 
@@ -27,6 +33,10 @@ pub struct LevelSnapshot {
 }
 
 /// Complete serializable state required to continue one matching engine.
+///
+/// Deserialization alone does not validate the contents. Activate state with
+/// [`MatchingEngine::from_snapshot`], which checks schema, ordering, identity,
+/// instrument rules, capacities, counters, and an uncrossed book.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EngineSnapshot {
     /// Snapshot schema version for compatibility validation.
@@ -37,9 +47,9 @@ pub struct EngineSnapshot {
     pub spec: InstrumentSpec,
     /// Logical capacity limits used by this engine.
     pub config: EngineConfig,
-    /// Next exchange order ID sequence to allocate.
+    /// Next unused exchange order ID sequence, initially 1.
     pub next_order_id: u64,
-    /// Next FIFO priority sequence to allocate, starting at zero.
+    /// Next unused FIFO priority, initially 0 and exactly `next_order_id - 1`.
     pub next_sequence: u64,
     /// Bid levels ordered from highest to lowest price.
     pub bids: Vec<LevelSnapshot>,
@@ -107,6 +117,10 @@ impl MatchingEngine {
     }
 }
 
+/// Groups adjacent equal prices without reordering an already sorted side.
+///
+/// Input must be best-price/FIFO order for exactly one side. This preserves
+/// priority within each level and allocates the serializable representation.
 fn levels_from_orders(orders: Vec<Order>) -> Vec<LevelSnapshot> {
     let mut levels: Vec<LevelSnapshot> = Vec::new();
     for order in orders {
@@ -122,6 +136,11 @@ fn levels_from_orders(orders: Vec<Order>) -> Vec<LevelSnapshot> {
     levels
 }
 
+/// Checks the complete snapshot before constructing a usable engine.
+///
+/// Uniqueness sets are shared across bid/ask validation so duplicates cannot
+/// hide on the other side. All semantic failures become `InvalidSnapshot`;
+/// temporary validation storage can allocate outside the command path.
 fn validate_snapshot(snapshot: &EngineSnapshot) -> Result<(), MatchingError> {
     if snapshot.version != SNAPSHOT_VERSION
         || snapshot.engine_id.0 == 0
@@ -184,6 +203,13 @@ fn validate_snapshot(snapshot: &EngineSnapshot) -> Result<(), MatchingError> {
     Ok(())
 }
 
+/// Validates one side's price ordering and each level's live FIFO orders.
+///
+/// The mutable ID/priority sets and order count accumulate across both sides.
+/// Remaining size must be positive and at most the instrument maximum, but may
+/// be below its command minimum after a partial fill. Requiring that minimum
+/// here would reject valid live state. Counters must be unused successors, and
+/// public IDs must retain the version-1 relation to FIFO sequences.
 #[allow(clippy::too_many_arguments)]
 fn validate_levels(
     levels: &[LevelSnapshot],

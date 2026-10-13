@@ -1,4 +1,4 @@
-.PHONY: help format typecheck fix test test-release replay-release clean
+.PHONY: help format typecheck docs fix test test-release replay-release clean
 
 .DEFAULT_GOAL := help
 
@@ -7,6 +7,9 @@ format: ## Format all Rust workspace crates
 
 typecheck: ## Lint and type-check all Rust workspace targets
 	cargo clippy --workspace --all-targets -- -D warnings
+
+docs: ## Build public and internal Rust documentation with warnings denied
+	RUSTDOCFLAGS="$(RUSTDOCFLAGS) -D warnings" cargo doc --workspace --no-deps --document-private-items
 
 fix: format typecheck ## Format and check the Rust workspace
 

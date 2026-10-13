@@ -3,6 +3,20 @@
 //! `Book` owns stable arena entries and links orders within each price level.
 //! Bid and ask levels use `BTreeMap`; its node allocations are part of this
 //! correctness-first baseline and are not claimed to be real-time bounded.
+//!
+//! # Internal contract
+//!
+//! Every live order has one arena entry, one public-ID index entry, and one
+//! position in a doubly linked FIFO at its `(side, price)`. Active levels are
+//! nonempty, their counts and quantities equal their linked orders, and their
+//! FIFO sequences strictly increase. The engine supplies validated positive
+//! values, fresh identities, and account ownership checks; this module handles
+//! storage and resulting-state capacity, not command authorization.
+//!
+//! Public-ID resolution costs `O(log N)` for `N` live orders. Once resolved,
+//! unlinking updates neighboring handles without scanning the level; price-map
+//! lookup/removal still costs `O(log L)` for `L` levels. Mutations assume these
+//! invariants hold. Internal corruption is not a recoverable trading rejection.
 
 use std::collections::BTreeMap;
 
@@ -11,17 +25,26 @@ use crate::types::{
     EngineConfig, LevelDelta, MatchingError, Order, OrderId, Price, Quantity, Side,
 };
 
+/// One live order and its neighbors within a single side/price FIFO.
 struct Entry {
+    /// Remaining order state; its side and price identify the containing level.
     order: Order,
+    /// Older sibling, or `None` at the level's head.
     previous: Option<Handle>,
+    /// Newer sibling, or `None` at the level's tail.
     next: Option<Handle>,
 }
 
+/// FIFO endpoints and cached aggregates; empty instances exist only during insertion.
 #[derive(Default)]
 struct Level {
+    /// Oldest live maker, consumed first by matching.
     head: Option<Handle>,
+    /// Newest live maker, followed by the next append.
     tail: Option<Handle>,
+    /// Number of nodes reachable from `head`.
     count: usize,
+    /// Sum of the linked orders' remaining quantities in lot-size quanta.
     total_size: u128,
 }
 
@@ -39,6 +62,7 @@ pub(crate) struct LevelInfo {
 }
 
 impl LevelInfo {
+    /// Converts this captured aggregate into a public response value.
     pub(crate) fn delta(self) -> LevelDelta {
         LevelDelta {
             price: self.price,
@@ -51,17 +75,28 @@ impl LevelInfo {
 
 /// One symbol's fixed-arena order store and ordered price levels.
 pub(crate) struct Book {
+    /// Preallocated nodes; private handles remain stable while an order is live.
     orders: Arena<Entry>,
+    /// Exchange identities resolve independently of arena slot reuse.
     order_index: BTreeMap<OrderId, Handle>,
+    /// Ascending keys; best bids are read from the back.
     bids: BTreeMap<Price, Level>,
+    /// Ascending keys; best asks are read from the front.
     asks: BTreeMap<Price, Level>,
+    /// Combined nonempty bid and ask level count.
     active_levels: usize,
+    /// Logical order limit for each `(side, price)`.
     max_orders_per_level: usize,
+    /// Logical level limit across both sides.
     max_levels: usize,
 }
 
 impl Book {
     /// Creates an empty book with capacity derived from its validated config.
+    ///
+    /// The caller supplies `max_live_orders = config.validate()?`. Arena
+    /// reservation can return `AllocationFailed`; ordered maps allocate later
+    /// during insertion and retain the documented process-failure boundary.
     pub(crate) fn new(
         config: &EngineConfig,
         max_live_orders: usize,
@@ -81,18 +116,22 @@ impl Book {
         })
     }
 
+    /// Returns the number of live orders across both sides.
     pub(crate) fn len(&self) -> usize {
         self.orders.len()
     }
 
+    /// Returns the highest bid, or `None` for an empty bid side.
     pub(crate) fn best_bid(&self) -> Option<Price> {
         self.bids.last_key_value().map(|(price, _)| *price)
     }
 
+    /// Returns the lowest ask, or `None` for an empty ask side.
     pub(crate) fn best_ask(&self) -> Option<Price> {
         self.asks.first_key_value().map(|(price, _)| *price)
     }
 
+    /// Copies a level's aggregate, returning `None` when that side/price is absent.
     pub(crate) fn level_info(&self, side: Side, price: Price) -> Option<LevelInfo> {
         let level = self.levels(side).get(&price)?;
         Some(LevelInfo {
@@ -103,6 +142,10 @@ impl Book {
         })
     }
 
+    /// Allocates up to `limit` aggregates in best-to-worst order for one side.
+    ///
+    /// A zero limit returns no levels. This is a query convenience, not a
+    /// preallocated command-path operation.
     pub(crate) fn depth(&self, side: Side, limit: usize) -> Vec<LevelInfo> {
         if limit == 0 {
             return Vec::new();
@@ -115,19 +158,25 @@ impl Book {
         result
     }
 
+    /// Resolves a public ID through the ordered index and validates its handle.
     pub(crate) fn get_order(&self, order_id: OrderId) -> Option<&Order> {
         let handle = *self.order_index.get(&order_id)?;
         Some(&self.orders.get(handle)?.order)
     }
 
+    /// Returns the indexed private handle without dereferencing its arena slot.
     pub(crate) fn handle_for(&self, order_id: OrderId) -> Option<Handle> {
         self.order_index.get(&order_id).copied()
     }
 
+    /// Resolves a live generation-checked handle; stale or absent slots return `None`.
     pub(crate) fn order_for_handle(&self, handle: Handle) -> Option<&Order> {
         self.orders.get(handle).map(|entry| &entry.order)
     }
 
+    /// Checks whether a maker price meets or passes the best opposite price.
+    ///
+    /// Equality crosses; an empty opposite side never crosses.
     pub(crate) fn would_cross(&self, side: Side, price: Price) -> bool {
         match side {
             Side::Buy => self.best_ask().is_some_and(|ask| price >= ask),
@@ -135,6 +184,11 @@ impl Book {
         }
     }
 
+    /// Preflights level count, order count, aggregate arithmetic, and arena availability.
+    ///
+    /// Returns `CapacityExceeded` without mutation if any limit fails, including
+    /// when generation retirement leaves no reusable slot. Price/size validity,
+    /// crossing, ownership, and client-ID uniqueness are checked by the engine.
     pub(crate) fn can_add(
         &self,
         side: Side,
@@ -157,6 +211,12 @@ impl Book {
         Ok(())
     }
 
+    /// Checks replacement capacity after logically removing the original order.
+    ///
+    /// Removing the last order releases a level; a same-price replacement first
+    /// subtracts its own count and quantity. No spare arena slot is needed.
+    /// Returns `OrderNotFound`, `InvalidSnapshot` for an inconsistent source
+    /// level, or `CapacityExceeded`. It performs no mutation.
     pub(crate) fn can_amend(
         &self,
         order_id: OrderId,
@@ -206,6 +266,11 @@ impl Book {
         Ok(())
     }
 
+    /// Inserts a fresh public ID at its level's FIFO tail and returns the final aggregate.
+    ///
+    /// The caller validates domain values and increasing FIFO priority. Capacity
+    /// and duplicate exchange IDs are checked here before insertion; duplicate
+    /// IDs return `CapacityExceeded`. Map allocations remain system failures.
     pub(crate) fn add_order(&mut self, order: Order) -> Result<LevelInfo, MatchingError> {
         self.can_add(order.side, order.price, order.size)?;
         if self.order_index.contains_key(&order.order_id) {
@@ -237,6 +302,11 @@ impl Book {
             .expect("new order creates active level"))
     }
 
+    /// Unlinks a live order, frees its arena slot, and removes an emptied level.
+    ///
+    /// Returns the removed order and the final level aggregate, including a zero
+    /// aggregate for a removed level. An unknown public ID returns `OrderNotFound`;
+    /// broken internal handles return `InvalidSnapshot`.
     pub(crate) fn remove_order(
         &mut self,
         order_id: OrderId,
@@ -268,6 +338,14 @@ impl Book {
         Ok((removed.order, info))
     }
 
+    /// Reuses the old slot while replacing its public ID and appending at the tail.
+    ///
+    /// The engine must preserve side, account, and client ID and supply a fresh
+    /// exchange ID/priority. Returns the old order, the source aggregate after
+    /// removal, and the destination aggregate after insertion. Even for the
+    /// same price, both intermediate and final aggregates must be emitted in
+    /// that order. Capacity checks precede unlinking; valid internal links are
+    /// a precondition throughout commit.
     pub(crate) fn replace_order(
         &mut self,
         old_order_id: OrderId,
@@ -328,6 +406,12 @@ impl Book {
         Ok((old_order, old_info, new_info))
     }
 
+    /// Commits a previously planned fill against a live maker.
+    ///
+    /// The caller supplies a positive size no greater than the maker's remaining
+    /// size. A full fill removes and returns the order; a partial fill returns
+    /// `None` and retains its FIFO position. Invalid handles also return `None`,
+    /// so this is not a validation API: planning must establish handle validity.
     pub(crate) fn apply_fill(&mut self, handle: Handle, fill_size: Quantity) -> Option<Order> {
         let entry = self.orders.get(handle)?;
         let order_id = entry.order.order_id;
@@ -345,6 +429,12 @@ impl Book {
         }
     }
 
+    /// Visits makers in best-price/FIFO order up to an inclusive taker limit.
+    ///
+    /// `maker_side` names the opposite side being consumed: asks at or below the
+    /// limit, or bids at or above it. The callback receives price, private handle,
+    /// and a shared order; returning `false` stops the entire traversal. No book
+    /// mutation or result allocation occurs here. A broken handle stops traversal.
     pub(crate) fn visit_eligible(
         &self,
         maker_side: Side,
@@ -383,6 +473,7 @@ impl Book {
         }
     }
 
+    /// Visits aggregates in best-to-worst order until the callback returns `false`.
     pub(crate) fn visit_levels(&self, side: Side, mut visit: impl FnMut(LevelInfo) -> bool) {
         match side {
             Side::Buy => {
@@ -412,6 +503,9 @@ impl Book {
         }
     }
 
+    /// Allocates copies in best-price/FIFO order for snapshots and diagnostics.
+    ///
+    /// Requires valid FIFO links; it is not a corruption-tolerant traversal.
     pub(crate) fn orders_in_priority(&self, side: Side) -> Vec<Order> {
         let mut result = Vec::with_capacity(self.len());
         self.visit_levels(side, |info| {
@@ -430,6 +524,12 @@ impl Book {
         result
     }
 
+    /// Audits link reciprocity, FIFO sequence, aggregates, indexes, and limits.
+    ///
+    /// Every reachable handle must resolve to the indexed order at that level.
+    /// A bounded node count detects cycles; total reachability must match arena
+    /// occupancy. Returns `InvalidSnapshot` on inconsistency. This full-book
+    /// diagnostic is used at recovery/test boundaries, not for each command.
     pub(crate) fn validate_invariants(&self) -> Result<(), MatchingError> {
         let mut visited = 0usize;
         let mut expected_active_levels = 0usize;
@@ -508,6 +608,10 @@ impl Book {
         Ok(())
     }
 
+    /// Links a detached live node at an existing level's tail and adds its aggregate.
+    ///
+    /// The level and handle must exist, `size` must match the order, and capacity
+    /// and arithmetic must already be preflighted. Violations indicate a caller bug.
     fn append_to_level(&mut self, side: Side, price: Price, handle: Handle, size: Quantity) {
         let tail = self.levels(side).get(&price).and_then(|level| level.tail);
         if let Some(tail) = tail {
@@ -528,6 +632,11 @@ impl Book {
         level.total_size += u128::from(size.0);
     }
 
+    /// Detaches a live node, repairs neighbors, and removes an emptied level.
+    ///
+    /// The arena slot remains live for removal or replacement by the caller.
+    /// Side, price, size, and reciprocal links must match the node's current
+    /// membership; lookup and aggregate subtraction rely on that invariant.
     fn unlink_from_level(&mut self, side: Side, price: Price, handle: Handle, size: Quantity) {
         let (previous, next) = {
             let entry = self.orders.get(handle).expect("unlinked handle is live");
@@ -569,6 +678,7 @@ impl Book {
         entry.next = None;
     }
 
+    /// Selects a side's ascending price map without changing traversal order.
     fn levels(&self, side: Side) -> &BTreeMap<Price, Level> {
         match side {
             Side::Buy => &self.bids,
@@ -576,6 +686,7 @@ impl Book {
         }
     }
 
+    /// Selects the price map whose levels a storage mutation will update.
     fn levels_mut(&mut self, side: Side) -> &mut BTreeMap<Price, Level> {
         match side {
             Side::Buy => &mut self.bids,
@@ -584,6 +695,7 @@ impl Book {
     }
 }
 
+/// Copies public order state without exposing private node links or handles.
 fn copy_order(order: &Order) -> Order {
     Order {
         order_id: order.order_id,

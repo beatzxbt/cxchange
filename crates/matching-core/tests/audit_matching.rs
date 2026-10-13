@@ -1,4 +1,9 @@
 //! Independent matching model and directed price-time correctness checks.
+//!
+//! The oracle uses a flat order vector and recomputes aggregates; it deliberately
+//! shares no arena, FIFO-link, or matching implementation with the engine.
+//! Seeded streams compare complete outcomes and live queries after every step;
+//! directed scenarios pin down FIFO and reached-only self-trade behavior.
 
 use std::collections::BTreeSet;
 
@@ -65,6 +70,7 @@ fn place(
     response.order_deltas[0].order_id
 }
 
+/// Simple behavioral oracle whose storage differs from the production book.
 #[derive(Clone)]
 struct Model {
     orders: Vec<Order>,
@@ -73,6 +79,7 @@ struct Model {
 }
 
 impl Model {
+    /// Starts an empty oracle with the contract's next-unused counters.
     fn new() -> Self {
         Self {
             orders: Vec::new(),
@@ -81,6 +88,7 @@ impl Model {
         }
     }
 
+    /// Advances oracle identity only after the command's rejection checks pass.
     fn identity(&mut self) -> (OrderId, u64) {
         let result = (OrderId::new(ENGINE_ID, self.next_id), self.next_priority);
         self.next_id += 1;
@@ -88,6 +96,7 @@ impl Model {
         result
     }
 
+    /// Recomputes a side/price aggregate directly from all live orders.
     fn level(&self, side: Side, price: Price) -> LevelDelta {
         let matching = self
             .orders
@@ -101,6 +110,7 @@ impl Model {
         }
     }
 
+    /// Rebuilds best-to-worst depth rather than maintaining a cached price index.
     fn levels(&self, side: Side) -> Vec<LevelDelta> {
         let mut prices: Vec<_> = self
             .orders
@@ -119,6 +129,7 @@ impl Model {
             .collect()
     }
 
+    /// Counts distinct side/price pairs for the combined logical level limit.
     fn active_levels(&self) -> usize {
         self.orders
             .iter()
@@ -127,6 +138,7 @@ impl Model {
             .len()
     }
 
+    /// Applies the inclusive maker-crossing rule to recomputed opposite depth.
     fn would_cross(&self, side: Side, price: Price) -> bool {
         let opposite = self.levels(side.opposite());
         opposite.first().is_some_and(|best| match side {
@@ -135,6 +147,7 @@ impl Model {
         })
     }
 
+    /// Validates command values against this test instrument's size bounds.
     fn validate(price: Price, size: Quantity) -> Result<(), MatchingError> {
         if price.0 == 0 {
             return Err(MatchingError::InvalidPrice);
@@ -145,6 +158,7 @@ impl Model {
         Ok(())
     }
 
+    /// Resolves a vector offset with the contract's domain/existence/owner precedence.
     fn owned(&self, account: AccountId, id: OrderId) -> Result<usize, MatchingError> {
         if id.engine_id != ENGINE_ID {
             return Err(MatchingError::WrongEngine);
@@ -160,6 +174,7 @@ impl Model {
         Ok(index)
     }
 
+    /// Computes a command outcome independently, validating before vector mutation.
     fn execute(&mut self, command: Command) -> Result<MatchingResponse, MatchingError> {
         let mut response = MatchingResponse::default();
         match command {
@@ -385,6 +400,7 @@ impl Model {
     }
 }
 
+/// Compares depth, best prices, live/stale identities, and client lookup after each step.
 fn assert_book(engine: &MatchingEngine, model: &Model) {
     for side in [Side::Buy, Side::Sell] {
         let expected = model.levels(side);
@@ -424,6 +440,7 @@ fn assert_book(engine: &MatchingEngine, model: &Model) {
     engine.validate_invariants().unwrap();
 }
 
+/// Advances deterministic xorshift state so any failing trace can be reproduced.
 fn next_random(state: &mut u64) -> u64 {
     *state ^= *state << 13;
     *state ^= *state >> 7;
@@ -431,6 +448,10 @@ fn next_random(state: &mut u64) -> u64 {
     *state
 }
 
+/// Produces mixed valid/rejected commands, with periodic stale IDs and wrong owners.
+///
+/// Model state selects meaningful live targets; fixed seeds reproduce the
+/// stream without introducing a random-number dependency or wall-clock input.
 fn generated_command(model: &Model, state: &mut u64, step: usize) -> Command {
     let draw = next_random(state);
     let side = if draw & 1 == 0 { Side::Buy } else { Side::Sell };

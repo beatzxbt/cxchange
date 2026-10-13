@@ -3,6 +3,12 @@
 //! `MatchingEngine` is the sole mutable owner for one symbol. Each command is
 //! planned and its complete response capacity is checked before the book or
 //! sequencing counters change.
+//!
+//! Maker commands preflight and then update storage directly. Takers first
+//! collect reached makers and final level aggregates in reusable scratch; a
+//! late self-trade therefore rejects without applying earlier planned fills.
+//! Commit relies on exclusive ownership keeping those handles live. Scratch is
+//! transient and is neither authoritative state nor part of a snapshot.
 
 use std::collections::BTreeMap;
 
@@ -14,31 +20,55 @@ use crate::types::{
     Side,
 };
 
+/// One reached maker and its execution amount, retained until taker commit.
 #[derive(Clone, Copy)]
 struct PlannedFill {
+    /// Live arena reference established by the read-only traversal.
     handle: Handle,
+    /// Maker price used for both the fill and maker order delta.
     price: Price,
+    /// Positive execution amount, at most the maker's remaining quantity.
     size: Quantity,
 }
 
+/// Final aggregate for one touched level, in first-visit matching order.
 #[derive(Clone, Copy)]
 struct PlannedLevel {
+    /// Price of the reached maker level.
     price: Price,
+    /// Maker side whose remaining aggregate is being planned.
     side: Side,
+    /// Remaining quantity after all planned fills at this level.
     total_size: u128,
+    /// Remaining live makers after all planned fills at this level.
     order_count: usize,
 }
 
 /// Deterministic single-symbol matching engine with price-time priority.
+///
+/// Submit commands through [`Self::execute_into`] using a reusable response.
+/// Queries borrow or copy state and cannot mutate the book. Callers serialize
+/// access to this owner; the engine supplies no background worker or queue.
+/// Returned command errors preserve live state and counters. Ordered-map
+/// allocator/process failure is outside that recoverable-error guarantee.
 pub struct MatchingEngine {
+    /// Caller-assigned nonzero domain shared by all issued public order IDs.
     pub(crate) engine_id: EngineId,
+    /// Instrument rules validated at creation or restore.
     pub(crate) spec: InstrumentSpec,
+    /// Logical limits persisted with snapshots for deterministic replay.
     pub(crate) config: EngineConfig,
+    /// Arena, public-ID index, and side/price FIFO storage.
     pub(crate) book: Book,
+    /// Live resting makers only; transient takers never enter this index.
     pub(crate) client_to_order: BTreeMap<(AccountId, ClientOrderId), OrderId>,
+    /// Next unused public sequence, initially 1; never an arena index.
     pub(crate) next_order_id: u64,
+    /// Next unused FIFO sequence, initially 0; always `next_order_id - 1`.
     pub(crate) next_sequence: u64,
+    /// Startup-reserved scratch for a sweep of every legal live maker.
     fill_plan: Vec<PlannedFill>,
+    /// Startup-reserved scratch for one final delta per touched level.
     level_plan: Vec<PlannedLevel>,
 }
 
@@ -54,7 +84,9 @@ impl MatchingEngine {
     /// # Returns
     ///
     /// A ready engine, or an error if its identity, specification, or
-    /// configured capacities are invalid.
+    /// configured capacities are invalid, or `AllocationFailed` when arena or
+    /// scratch reservation fails. The caller must assign engine IDs uniquely
+    /// within its deployment's identity domain.
     pub fn new(
         engine_id: EngineId,
         spec: InstrumentSpec,
@@ -94,10 +126,14 @@ impl MatchingEngine {
     /// The response is cleared at entry. Every possible result size and all
     /// counter advances are checked before a command mutates authoritative
     /// state. A taker may fill any number of makers up to the live-order cap.
+    /// No output vectors are grown by this method; create full-sweep storage
+    /// with [`MatchingResponse::with_capacity`]. On rejection the response is
+    /// empty and retains its allocated capacity. Ordered maps can allocate
+    /// during commit; process allocation failure is not a returned rejection.
     ///
     /// # Arguments
     ///
-    /// * `command` - Validated command variant with values checked at runtime.
+    /// * `command` - Typed command whose values and ownership are checked at runtime.
     /// * `response` - Reusable output storage with enough capacity for this result.
     ///
     /// # Returns
@@ -139,6 +175,9 @@ impl MatchingEngine {
     }
 
     /// Looks up a live order by its engine-scoped public identity.
+    ///
+    /// Returns `None` for a foreign engine, an unknown ID, or a terminal order.
+    /// The shared reference prevents mutation of authoritative state.
     pub fn get_order(&self, order_id: OrderId) -> Option<&Order> {
         if order_id.engine_id != self.engine_id {
             return None;
@@ -147,6 +186,9 @@ impl MatchingEngine {
     }
 
     /// Looks up a live order by account-scoped client identity.
+    ///
+    /// Takers are never live in this index. Terminal maker IDs become reusable;
+    /// successful amends preserve the client ID while changing its public ID.
     pub fn get_order_by_client_id(
         &self,
         account_id: AccountId,
@@ -182,6 +224,9 @@ impl MatchingEngine {
     }
 
     /// Returns up to `levels` aggregates in best-to-worst price order.
+    ///
+    /// Bids descend, asks ascend, and zero returns an empty vector. This query
+    /// allocates a result and is separate from reusable command output.
     pub fn depth(&self, side: Side, levels: usize) -> Vec<LevelDelta> {
         self.book
             .depth(side, levels)
@@ -201,6 +246,11 @@ impl MatchingEngine {
     }
 
     /// Verifies book links, aggregates, indexes, ownership, and counters.
+    ///
+    /// Returns `InvalidSnapshot` on inconsistency. This diagnostic traverses
+    /// the full book and allocates temporary order copies; use it at recovery
+    /// or test boundaries rather than on the normal command path. Positive
+    /// partial remainders may be below the instrument's command minimum.
     pub fn validate_invariants(&self) -> Result<(), MatchingError> {
         self.book.validate_invariants()?;
         if self.client_to_order.len() != self.book.len() {
@@ -259,6 +309,10 @@ impl MatchingEngine {
         self.book.orders_in_priority(side)
     }
 
+    /// Validates a maker and reserves output/identity before appending to its FIFO.
+    ///
+    /// Only a committed resting maker enters the account/client index. The
+    /// result contains one open-order delta and the final level aggregate.
     fn add(
         &mut self,
         account_id: AccountId,
@@ -304,6 +358,10 @@ impl MatchingEngine {
         Ok(())
     }
 
+    /// Removes an owned maker and its client mapping without advancing counters.
+    ///
+    /// Output capacity is checked before unlinking; the result reports a
+    /// terminal order and the final aggregate, including an emptied level.
     fn cancel(
         &mut self,
         account_id: AccountId,
@@ -328,6 +386,11 @@ impl MatchingEngine {
         Ok(())
     }
 
+    /// Replaces an owned maker after validating the complete resulting state.
+    ///
+    /// Every successful replacement gets a fresh ID/priority, even when price
+    /// and size are unchanged. Old/new order deltas and removal/insertion level
+    /// deltas retain that order; a rejection preserves the original maker.
     fn amend(
         &mut self,
         account_id: AccountId,
@@ -380,6 +443,13 @@ impl MatchingEngine {
         Ok(())
     }
 
+    /// Plans the complete eligible execution before applying any maker fill.
+    ///
+    /// Planning stops at requested size or the inclusive limit. Self-trade is
+    /// checked only for reached makers, but any conflict rejects the whole plan.
+    /// After identity and output preflight, commit emits the taker delta first,
+    /// followed by maker deltas/fills and one final delta per touched level.
+    /// Unfilled taker quantity is discarded and never enters the client index.
     fn take(
         &mut self,
         account_id: AccountId,
@@ -530,6 +600,7 @@ impl MatchingEngine {
         Ok(())
     }
 
+    /// Checks a positive price and inclusive command-size bounds in exact units.
     fn validate_price_size(&self, price: Price, size: Quantity) -> Result<(), MatchingError> {
         if price.0 == 0 {
             return Err(MatchingError::InvalidPrice);
@@ -540,6 +611,10 @@ impl MatchingEngine {
         Ok(())
     }
 
+    /// Copies a live order after checking engine domain, existence, then account.
+    ///
+    /// That validation order determines `WrongEngine`, `OrderNotFound`, or
+    /// `WrongOwner` without mutating state.
     fn resolve_owned(
         &self,
         account_id: AccountId,
@@ -559,6 +634,11 @@ impl MatchingEngine {
         Ok(order)
     }
 
+    /// Previews `(public_id, priority, next_id, next_priority)` without consumption.
+    ///
+    /// Both stored counters name the next unused value. Callers install the
+    /// returned successors only after commit; either checked increment failing
+    /// returns `CounterExhausted` and leaves both unchanged.
     fn next_identity(&self) -> Result<(OrderId, u64, u64, u64), MatchingError> {
         let priority = self.next_sequence;
         let next_order_id = self

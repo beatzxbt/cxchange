@@ -1,4 +1,10 @@
 //! End-to-end snapshot continuation, JSON replay, and execution-pool audit tests.
+//!
+//! A fixed mixed trace supplies results and snapshots at every command boundary.
+//! Each restored continuation must reproduce the uninterrupted execution; CLI
+//! checks cross the serialized process boundary, and adapter checks retain
+//! response ownership under pressure. These are behavioral integration checks,
+//! separate from the flat-vector oracle in `audit_matching.rs`.
 
 use std::io::Write;
 use std::process::{Command as ProcessCommand, Stdio};
@@ -75,6 +81,8 @@ fn amend(account: u64, sequence: u64, price: u64, size: u64) -> Command {
     }
 }
 
+/// Mixes successful transitions with duplicate, self-trade, crossing, stale-ID,
+/// wrong-owner, and no-liquidity rejections for recovery-boundary comparisons.
 fn mixed_trace() -> Vec<Command> {
     vec![
         add(1, 10, Side::Sell, 101, 10),
@@ -102,6 +110,7 @@ fn mixed_trace() -> Vec<Command> {
     ]
 }
 
+/// Copies a successful reusable response so later commands cannot overwrite expectations.
 fn execute(
     engine: &mut MatchingEngine,
     response: &mut MatchingResponse,
@@ -112,6 +121,9 @@ fn execute(
         .map(|()| response.clone())
 }
 
+/// Records uninterrupted outcomes and `N + 1` states, including the initial book.
+///
+/// `snapshots[i]` is the state before command `i`, or the final state at `N`.
 fn baseline(
     trace: &[Command],
 ) -> (
@@ -235,18 +247,21 @@ fn restore_rejects_individually_corrupt_identity_priority_fifo_and_counters() {
     );
 }
 
+/// Decodes the CLI's mutually exclusive response/error fields for comparison.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct ReplayOutcome {
     response: Option<MatchingResponse>,
     error: Option<String>,
 }
 
+/// Typed CLI output preserves wide aggregates without a generic JSON value conversion.
 #[derive(Debug, Deserialize, PartialEq)]
 struct ReplayOutput {
     results: Vec<ReplayOutcome>,
     snapshot: EngineSnapshot,
 }
 
+/// Runs the actual replay binary via stdin and decodes its complete output.
 fn replay(
     trace: &[Command],
     roundtrip_after: Option<usize>,

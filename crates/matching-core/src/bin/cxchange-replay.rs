@@ -3,6 +3,12 @@
 //! Read a trace from stdin or a file argument. Write complete command outcomes
 //! and a final versioned snapshot to stdout. Optional restore during execution
 //! exercises snapshot continuation without exposing private arena handles.
+//!
+//! Usage: `cxchange-replay [trace.json]`. Commands use the library's tagged
+//! Serde representation. Matching rejections are ordinary outcomes with error
+//! codes; malformed input, failed restore, and invariant failures exit nonzero.
+//! Results are buffered until all commands and optional serialized recovery
+//! succeed. This diagnostic tool allocates copies and is not a latency harness.
 
 use matching_core::{
     Command, EngineConfig, EngineId, EngineSnapshot, InstrumentSpec, MatchingEngine,
@@ -16,10 +22,14 @@ use std::io::{self, Read};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Trace {
+    /// Nonzero identity domain for every order issued in this trace.
     engine_id: EngineId,
+    /// Exact instrument units and command size bounds.
     spec: InstrumentSpec,
+    /// Logical limits; omitted values use the library's baseline defaults.
     #[serde(default)]
     config: EngineConfig,
+    /// Commands applied in their supplied order, including rejected commands.
     commands: Vec<Command>,
     /// Restore after this many commands, including zero for an initial restore.
     #[serde(default)]
@@ -29,14 +39,18 @@ struct Trace {
 /// One complete outcome; a rejection contains a stable machine-readable code.
 #[derive(Serialize)]
 struct Outcome {
+    /// Complete result on success; absent on matching rejection.
     response: Option<MatchingResponse>,
+    /// Stable rejection code; absent on success.
     error: Option<&'static str>,
 }
 
 /// Direct serialization preserves aggregate integers wider than JSON Value's u64 storage.
 #[derive(Serialize)]
 struct ReplayOutput {
+    /// One success or rejection for each input command, in order.
     results: Vec<Outcome>,
+    /// State after the last command and optional restore boundary.
     snapshot: EngineSnapshot,
 }
 
@@ -96,7 +110,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Report malformed traces and system failures without emitting partial JSON.
+/// Reports input/execution failures on stderr and returns a nonzero exit status.
+///
+/// Validation and execution finish before JSON emission; an output I/O failure
+/// can still interrupt serialization after bytes have been written.
 fn main() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
