@@ -1,0 +1,30 @@
+{
+  "date_utc": "2026-10-12",
+  "build_command": "cargo build --release --bin cxchange-latency",
+  "run_command": "target/release/cxchange-latency --samples 1100000 --rate 50000 --output <report.json>",
+  "source_commits": {
+    "apple-m2-run-1.json": "cabd1093587d832807a9fc1838997493bc345af9",
+    "apple-m2-run-2.json": "48cb604248ddbc22562883b277829574b9ab529a"
+  },
+  "source_difference": "Run 2 includes only a Linux CPU-probe compile correction; matching implementation and macOS probe behavior are unchanged.",
+  "host": {
+    "cpu": "Apple M2",
+    "memory_bytes": 17179869184,
+    "logical_cpus": 8,
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O"
+  },
+  "declared_release_profile": {
+    "opt_level": 3,
+    "overflow_checks": true,
+    "debug_assertions": false
+  },
+  "environment_overrides": {
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "CARGO_PROFILE_RELEASE_OPT_LEVEL": null,
+    "CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS": null
+  },
+  "execution_environment": "Shared workstation; no CPU affinity, isolation, or frequency control. No local builds or other agents were active during measured loops.",
+  "occupancy_scope": "JSON measures adapter queue and response-credit occupancy. Live-book starting occupancy is specified by profile construction; peak/final live-book occupancy is not instrumented.",
+  "acceptance": "Each primary class has at least 1000000 successful samples in each run. All profiles have zero matching rejections. Admission rejections and dependency skips are retained in raw reports."
+}
