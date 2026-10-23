@@ -1,30 +1,45 @@
-.PHONY: help format typecheck docs fix test test-release replay-release clean
+.PHONY: help format typecheck fix test sync clean %
 
 .DEFAULT_GOAL := help
 
-format: ## Format all Rust workspace crates
-	cargo fmt --all
+TEST_FLAGS := -xvv -s -p no:anchorpy
 
-typecheck: ## Lint and type-check all Rust workspace targets
-	cargo clippy --workspace --all-targets -- -D warnings
+format: ## Format code using ruff
+	uv run ruff format .
+	uv run ruff check --fix --unsafe-fixes .
 
-docs: ## Build public and internal Rust documentation with warnings denied
-	RUSTDOCFLAGS="$(RUSTDOCFLAGS) -D warnings" cargo doc --workspace --no-deps --document-private-items
+typecheck: ## Run static type checking
+	uv run ty check src/
 
-fix: format typecheck ## Format and check the Rust workspace
+fix: ## Run all formatters and typecheck
+	$(MAKE) format typecheck
 
-test: ## Run native Rust workspace tests
-	cargo test --workspace
+test: ## Run all tests (C + Python)
+	PYTHONPATH=src uv run pytest $(TEST_FLAGS)
 
-test-release: ## Run Rust tests in release mode with overflow checks enabled
-	CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true cargo test --workspace --release
+sync: ## Re‑lock and install latest versions
+	uv lock --upgrade       # rebuild uv.lock with newer pins
+	uv sync --extra dev     # install everything into .venv
 
-replay-release: ## Build the release command replay CLI
-	cargo build --release --bin cxchange-replay
+clean: ## Remove pytest and ruff caches
+	find . -type d -name "__pycache__" -delete
+	rm -rf .pytest_cache/ .ruff_cache/
 
-clean: ## Remove Rust build output
-	cargo clean
+# Pattern rule so additional args do not trigger "No rule to make target"
+%:
+	@:
 
-help: ## Display available targets
-	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  %-28s %s\n", $$1, $$2}'
+# Project‑specific entry points (replace poetry run → uv run)
+
+help: ## Display this help message
+	@echo 'Usage:'
+	@echo '  make <target>'
+	@echo ''
+	@echo 'Code Quality:'
+	@grep -E '^(format|typecheck|fix):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo ''
+	@echo 'Testing:'
+	@grep -E '^(test):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo ''
+	@echo 'Other:'
+	@grep -E '^(sync|clean|help):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
